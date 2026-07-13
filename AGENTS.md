@@ -77,7 +77,13 @@
 
 - 使用Python 3.12语法。
 - 使用完整类型注解。
+- 变量、函数、方法、模块、包名、以及 Pydantic 模型字段名一律使用蛇形命名（snake_case），禁止在 Python 代码中直接用驼峰命名字段/变量（类名用 PascalCase、常量用大写，属正常约定不受此限）。用户用驼峰描述字段时，需自行转换为蛇形理解与编码。
+- 前后端 API 契约统一使用蛇形命名（snake_case），前后端零命名转换：后端 Pydantic 模型字段、路由的 Query/Form 参数、SSE 事件 JSON key（如 `event_type`/`session_id`）全部用蛇形直出；前端请求体、query 参数、以及读取后端响应/SSE 的字段也全部用蛇形对齐。禁止为了迁就前端历史驼峰而做任何 alias 转换（不得使用 `CamelModel`/`alias_generator=to_camel`/`Query(alias=...)`/`Form(alias=...)` 等命名转换），前端有非蛇形字段时应同步改成蛇形，而不是让后端迁就。前端组件内部纯本地状态（不跨后端边界的变量名，如 store 中的 `userName`、toolEvents 的 `eventType`）可保留原命名，仅在读写后端契约字段的边界处做一次显式映射。
+- 后端内部数据链路全程蛇形、零字段名转换：数据库列名、SQLAlchemy 模型属性、Pydantic 请求/VO/DTO 字段一律同名蛇形（如 `user_name` 贯穿 DB 列 → ORM 属性 → VO 字段 → API 输出）。Service 层构造 VO 时禁止做 `user_name`→`userName` 之类的命名转换（这是 Java 因语言规范被迫的做法，Python 本身即蛇形，无需也不应转换）。
 - API请求和响应使用Pydantic模型。
+- 所有 API 接口必须统一用 `BaseResponse[T]` 包装返回（结构为 `{code, data, message}`，成功时 code=0、message="ok"）；成功用 `success(data)`、失败用 `error(error_code, message)`（见 [app/core/response.py](backend/app/core/response.py)）。禁止直接返回裸 dict、list 或实体对象。唯一例外是 SSE 流式接口（返回 `StreamingResponse`，如 `/ai/rag`、`/ai/react-agent`）。
+- 接口的返回类型注解须写成 `BaseResponse[具体类型]`（如 `BaseResponse[list[ChatSessionVO]]`、`BaseResponse[bool]`），保证 OpenAPI 文档与前端契约一致。
+- 分页返回统一用 `PageResult[T]`（`{total, records}`）作为 `data`，即 `BaseResponse[PageResult[T]]`。
 - 数据库访问通过Repository或明确的数据访问层完成。
 - 禁止在Controller/API路由中直接编写复杂业务逻辑。
 - 配置统一通过环境变量和Settings读取。

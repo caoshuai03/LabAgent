@@ -1,0 +1,8 @@
+import apiClient from './index'
+
+/**
+ * 获取所有 Skills 列表
+ */
+export const getSkills = () => {
+  return apiClient.get('/v1/skills')
+}

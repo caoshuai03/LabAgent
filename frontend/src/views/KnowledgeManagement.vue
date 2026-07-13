@@ -1,0 +1,1076 @@
+<template>
+  <div class="knowledge-container">
+    <Sidebar />
+    <div class="knowledge-main">
+      <div class="knowledge-content">
+        <div v-if="uploading" class="uploading-overlay" role="status" aria-live="polite">
+          <div class="uploading-modal">
+            <div class="uploading-spinner" />
+            <div class="uploading-text">文件上传中，请稍候...</div>
+          </div>
+        </div>
+        <!-- 顶部操作栏 -->
+        <div class="toolbar" v-if="!loading">
+          <div class="toolbar-left">
+            <!-- 上传按钮：管理员可直接上传，普通用户点击显示气泡提示 -->
+            <div class="header-actions">
+              <button
+                class="action-button upload"
+                @click="handleUploadClick"
+                :disabled="!isAdmin || uploading"
+                @mouseenter="showAdminTip = !isAdmin"
+                @mouseleave="showAdminTip = false"
+                v-tooltip="!isAdmin ? '仅管理员可上传，请联系管理员' : ''"
+              >
+                <UploadIcon :size="16" />
+                <span>上传文件</span>
+              </button>
+            </div>
+            <input
+              ref="fileInput"
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.md"
+              @change="handleFileSelect"
+              style="display: none"
+            />
+            <!-- 搜索框 -->
+            <div class="search-box">
+              <SearchIcon :size="18" />
+              <input v-model="searchKeyword" type="text" placeholder="搜索" @input="handleSearch" />
+              <button v-if="searchKeyword" @click="clearSearch" class="clear-search">×</button>
+            </div>
+          </div>
+          <div class="toolbar-right">
+            <button
+              v-if="isAdmin && selectedIds.length > 0"
+              @click="handleBatchDelete"
+              class="batch-btn danger"
+              :disabled="deleting"
+            >
+              <TrashIcon :size="16" />
+              <span>批量删除</span>
+            </button>
+            <button
+              v-if="selectedIds.length > 0"
+              @click="handleBatchDownload"
+              class="batch-btn"
+              :disabled="downloading"
+            >
+              <DownloadIcon :size="16" />
+              <span>批量下载</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 加载状态 -->
+        <div v-if="loading" class="loading-state">
+          <div class="spinner"></div>
+          <span>加载中...</span>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="fileList.length === 0 && !searchKeyword" class="empty-state">
+          <h3>暂无记录</h3>
+        </div>
+
+        <!-- 搜索无结果状态 -->
+        <div v-else-if="fileList.length === 0 && searchKeyword" class="empty-state">
+          <div class="empty-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="64"
+              height="64"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="11" cy="11" r="8"></circle>
+              <path d="m21 21-4.35-4.35"></path>
+            </svg>
+          </div>
+          <h3>未找到相关文件</h3>
+          <p>尝试使用其他关键词搜索</p>
+        </div>
+
+        <!-- 文件列表 -->
+        <div v-else-if="fileList.length > 0" class="file-list">
+          <div
+            v-for="file in fileList"
+            :key="file.id"
+            :class="['file-card', { selected: selectedIds.includes(file.id) }]"
+            @click="handleRowClick(file.id)"
+          >
+            <div class="file-header">
+              <div class="file-info">
+                <h3 class="file-name" v-tooltip="file.file_name">{{ file.file_name }}</h3>
+                <p class="file-time">{{ formatDate(file.create_time) }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 旧表格保留作为备用 -->
+        <div v-if="false" class="table-container">
+          <table class="file-table">
+            <thead>
+              <tr>
+                <th class="checkbox-col">
+                  <input type="checkbox" :checked="isAllSelected" @change="handleSelectAll" />
+                </th>
+                <th class="name-col">文件名</th>
+                <th class="time-col">上传时间</th>
+                <th class="action-col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading" class="loading-row">
+                <td colspan="4" class="loading-cell">
+                  <div class="loading-spinner">加载中...</div>
+                </td>
+              </tr>
+              <!-- 空状态 -->
+              <div v-else-if="fileList.length === 0 && !searchKeyword" class="empty-state">
+                <div class="empty-icon">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="64"
+                    height="64"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                    ></path>
+                  </svg>
+                </div>
+                <h3>暂无记录，点击新建下方按钮创建一个</h3>
+                <button @click="handleUploadClick" class="primary-button" :disabled="uploading">
+                  <UploadIcon :size="16" />
+                  <span>上传文件</span>
+                </button>
+              </div>
+
+              <!-- 搜索无结果状态 -->
+              <div v-else-if="fileList.length === 0 && searchKeyword" class="empty-state">
+                <div class="empty-icon">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="64"
+                    height="64"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                  </svg>
+                </div>
+                <h3>未找到相关文件</h3>
+                <p>尝试使用其他关键词搜索</p>
+              </div>
+              <tr
+                v-else
+                v-for="file in fileList"
+                :key="file.id"
+                :class="{ selected: selectedIds.includes(file.id) }"
+                @click="handleRowClick(file.id)"
+              >
+                <td class="checkbox-col" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="selectedIds.includes(file.id)"
+                    @change="handleSelectFile(file.id, $event.target.checked)"
+                  />
+                </td>
+                <td class="name-col">
+                  <div class="file-name" v-tooltip="file.file_name">
+                    {{ file.file_name }}
+                  </div>
+                </td>
+                <td class="time-col">
+                  {{ formatDate(file.create_time) }}
+                </td>
+                <td class="action-col" @click.stop>
+                  <button
+                    @click="handleDownload(file.id)"
+                    class="action-button download"
+                    :disabled="downloading"
+                    v-tooltip="'下载'"
+                  >
+                    <DownloadIcon :size="16" />
+                  </button>
+                  <button
+                    v-if="isAdmin"
+                    @click="handleDelete(file.id, file.file_name)"
+                    class="action-button delete"
+                    :disabled="deleting"
+                    v-tooltip="'删除'"
+                  >
+                    <TrashIcon :size="16" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { knowledgeApi } from '../api/knowledge'
+import { useChatStore } from '../stores/chat'
+import { useUserStore } from '../stores/user'
+import Sidebar from '../components/Sidebar.vue'
+import UploadIcon from '../components/icons/UploadIcon.vue'
+import DownloadIcon from '../components/icons/DownloadIcon.vue'
+import TrashIcon from '../components/icons/TrashIcon.vue'
+import SearchIcon from '../components/icons/SearchIcon.vue'
+
+// 初始化 chatStore 和 userStore
+const chatStore = useChatStore()
+const userStore = useUserStore()
+
+// 计算属性：是否为管理员
+const isAdmin = computed(() => userStore.isAdmin())
+
+// 气泡提示状态
+const showAdminTip = ref(false)
+let tipTimer = null
+
+// 状态
+const fileList = ref([])
+const searchKeyword = ref('')
+const selectedIds = ref([])
+const loading = ref(false)
+const uploading = ref(false)
+const deleting = ref(false)
+const downloading = ref(false)
+const fileInput = ref(null)
+
+const isAllSelected = computed(() => {
+  return fileList.value.length > 0 && selectedIds.value.length === fileList.value.length
+})
+
+// 防抖搜索
+let searchTimer = null
+const handleSearch = () => {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+  }
+  searchTimer = setTimeout(() => {
+    fetchFileList()
+  }, 300)
+}
+
+const clearSearch = () => {
+  searchKeyword.value = ''
+  fetchFileList()
+}
+
+const fetchFileList = async () => {
+  loading.value = true
+  try {
+    const params = {}
+    if (searchKeyword.value) {
+      params.file_name = searchKeyword.value
+    }
+    const response = await knowledgeApi.getFileList(params)
+    if (response.data.code === 0) {
+      const data = response.data.data
+      // 兼容后端全量返回 records/list，以及历史可能直接返回数组的结构
+      fileList.value = Array.isArray(data) ? data : data.records || data.list || []
+    } else {
+      console.error('获取文件列表失败:', response.data.message)
+      alert('获取文件列表失败: ' + (response.data.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('获取文件列表错误:', error)
+    alert('获取文件列表失败: ' + (error.message || '网络错误'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const formatDate = (dateString) => {
+  if (!dateString) return ''
+  const date = new Date(dateString)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+// 上传按钮点击处理：管理员直接上传，普通用户显示气泡提示
+const handleUploadClick = () => {
+  if (isAdmin.value) {
+    // 管理员：打开文件选择
+    fileInput.value?.click()
+  } else {
+    // 普通用户：显示气泡提示
+    showAdminTip.value = true
+    // 3秒后自动隐藏
+    if (tipTimer) clearTimeout(tipTimer)
+    tipTimer = setTimeout(() => {
+      showAdminTip.value = false
+    }, 3000)
+  }
+}
+
+const handleFileSelect = async (event) => {
+  const files = Array.from(event.target.files)
+  if (files.length === 0) return
+
+  uploading.value = true
+  try {
+    const formData = new FormData()
+    files.forEach((file) => {
+      formData.append('file', file)
+    })
+
+    const response = await knowledgeApi.uploadFiles(formData)
+    if (response.data.code === 0) {
+      showMessage(response.data.message || '文件上传成功')
+      await fetchFileList()
+      // 清空文件选择
+      if (fileInput.value) {
+        fileInput.value.value = ''
+      }
+    } else {
+      showMessage('文件上传失败: ' + (response.data.message || '未知错误'))
+      // 业务失败也清空文件选择，避免用户误以为已上传成功
+      if (fileInput.value) {
+        fileInput.value.value = ''
+      }
+    }
+  } catch (error) {
+    console.error('上传文件错误:', error)
+    // axios 超时一般会是 ECONNABORTED
+    if (error?.code === 'ECONNABORTED') {
+      showMessage('文件上传超时，请稍后重试')
+    } else if (error?.response?.status === 413) {
+      showMessage('文件过大，上传失败（413）')
+    } else if (error?.response?.status) {
+      showMessage(
+        `文件上传失败（${error.response.status}）: ` +
+          (error.response.data?.message || error.message || '网络错误'),
+      )
+    } else {
+      showMessage('文件上传失败: ' + (error.message || '网络错误'))
+    }
+    // 异常情况下也清空文件选择，避免重复触发 change 不生效
+    if (fileInput.value) {
+      fileInput.value.value = ''
+    }
+  } finally {
+    uploading.value = false
+  }
+}
+
+const handleSelectFile = (id, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) {
+      selectedIds.value.push(id)
+    }
+  } else {
+    selectedIds.value = selectedIds.value.filter((i) => i !== id)
+  }
+}
+
+const handleSelectAll = (event) => {
+  if (event.target.checked) {
+    selectedIds.value = fileList.value.map((file) => file.id)
+  } else {
+    selectedIds.value = []
+  }
+}
+
+const handleRowClick = (id) => {
+  const index = selectedIds.value.indexOf(id)
+  if (index > -1) {
+    selectedIds.value.splice(index, 1)
+  } else {
+    selectedIds.value.push(id)
+  }
+}
+
+const handleDelete = async (id, fileName) => {
+  if (!isAdmin.value) {
+    alert('仅管理员可操作知识库，请联系管理员')
+    return
+  }
+  if (!confirm(`确定要删除文件 "${fileName}" 吗？`)) {
+    return
+  }
+  await deleteFiles([id])
+}
+
+const handleBatchDelete = async () => {
+  if (!isAdmin.value) {
+    alert('仅管理员可操作知识库，请联系管理员')
+    return
+  }
+  if (selectedIds.value.length === 0) return
+  if (!confirm(`确定要删除选中的 ${selectedIds.value.length} 个文件吗？`)) {
+    return
+  }
+  await deleteFiles([...selectedIds.value])
+}
+
+const deleteFiles = async (ids) => {
+  deleting.value = true
+  try {
+    const response = await knowledgeApi.deleteFiles(ids)
+    if (response.data.code === 0) {
+      alert(response.data.message || '删除成功')
+      selectedIds.value = []
+      fetchFileList()
+    } else {
+      alert('删除失败: ' + (response.data.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('删除文件错误:', error)
+    alert('删除失败: ' + (error.message || '网络错误'))
+  } finally {
+    deleting.value = false
+  }
+}
+
+const handleDownload = async (id) => {
+  await downloadFiles([id])
+}
+
+const handleBatchDownload = async () => {
+  if (selectedIds.value.length === 0) return
+  await downloadFiles([...selectedIds.value])
+}
+
+const downloadFiles = async (ids) => {
+  downloading.value = true
+  try {
+    // 获取要下载的文件信息
+    const filesToDownload = fileList.value.filter((file) => ids.includes(file.id))
+
+    for (const file of filesToDownload) {
+      try {
+        // 优先使用新的文件流下载API
+        const response = await knowledgeApi.downloadFile(file.id)
+
+        // 处理blob下载
+        if (response.data instanceof Blob) {
+          const blob = response.data
+          const url = window.URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = file.file_name || `file_${file.id}`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          window.URL.revokeObjectURL(url)
+
+          // 添加延迟避免浏览器阻止多个下载
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        }
+      } catch (apiError) {
+        console.error(`API下载文件 ${file.id} 失败:`, apiError)
+
+        // API失败时，尝试使用OSS URL作为备选方案
+        if (file.url) {
+          try {
+            const link = document.createElement('a')
+            link.href = file.url
+            link.download = file.file_name || `file_${file.id}`
+            link.target = '_blank'
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          } catch (urlError) {
+            console.error(`URL下载文件 ${file.id} 也失败:`, urlError)
+            alert(`下载文件 "${file.file_name}" 失败`)
+          }
+        } else {
+          alert(`下载文件 "${file.file_name}" 失败: 无可用下载方式`)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('下载文件错误:', error)
+    alert('下载失败: ' + (error.message || '网络错误'))
+  } finally {
+    downloading.value = false
+  }
+}
+
+onMounted(() => {
+  chatStore.initialize()
+  fetchFileList()
+})
+</script>
+
+<style lang="scss" scoped>
+.knowledge-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  transition: background-color 0.3s ease;
+}
+
+.knowledge-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.knowledge-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  overflow: hidden;
+}
+
+// 上传遮罩层：上传期间阻止用户重复操作，并提供明确的等待反馈
+.uploading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .uploading-modal {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 20px 22px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    max-width: 80vw;
+  }
+
+  .uploading-spinner {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-color);
+    animation: uploadingSpin 0.9s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .uploading-text {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+}
+
+@keyframes uploadingSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// ==================== 加载 & 空状态 ====================
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 0;
+  color: var(--text-secondary);
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-color);
+    border-top-color: #90138b;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 80px 0;
+  color: var(--text-secondary);
+
+  h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--text-primary);
+  }
+}
+
+// 顶部操作栏
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+
+  .toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+  }
+
+  // 上传按钮包装器（用于定位气泡提示）
+  .header-actions {
+    position: relative;
+    display: inline-block;
+  }
+
+  // 普通用户上传按钮禁用样式
+  .primary-button.disabled-style {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .action-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(144, 19, 139, 0.1);
+    color: #90138b;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+
+    &:hover:not(:disabled) {
+      background: rgba(144, 19, 139, 0.15);
+    }
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  }
+
+  .toolbar-right {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .primary-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 20px;
+    background-color: #90138b;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+
+    &:hover:not(:disabled) {
+      background-color: #9b2a96;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  .search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    width: 280px;
+    transition: all 0.2s ease;
+
+    &:focus-within {
+      border-color: rgba(144, 19, 139, 0.3);
+    }
+
+    svg {
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+
+      &::placeholder {
+        color: var(--text-secondary);
+      }
+    }
+
+    .clear-search {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      &:hover {
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  .batch-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(144, 19, 139, 0.1);
+    color: #90138b;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+
+    &:hover:not(:disabled) {
+      background: rgba(144, 19, 139, 0.15);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    &.danger {
+      background: rgba(220, 53, 69, 0.1);
+      color: #dc3545;
+
+      &:hover:not(:disabled) {
+        background: rgba(220, 53, 69, 0.15);
+      }
+    }
+  }
+}
+
+// ==================== 文件列表 ====================
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  overflow: auto;
+}
+
+.file-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 18px;
+  background-color: var(--bg-secondary);
+  transition: all 0.2s;
+  cursor: pointer;
+
+  &:hover {
+    background-color: rgba(144, 19, 139, 0.03);
+  }
+
+  &.selected {
+    background-color: rgba(144, 19, 139, 0.08);
+    border-color: rgba(144, 19, 139, 0.2);
+  }
+}
+
+.file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-time {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background-color: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &.danger {
+    &:hover:not(:disabled) {
+      background-color: rgba(220, 53, 69, 0.1);
+      color: #dc3545;
+    }
+  }
+}
+
+// 表格容器（备用）
+.table-container {
+  flex: 1;
+  overflow: auto;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+
+  thead {
+    background-color: var(--bg-tertiary);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-color);
+    }
+  }
+
+  tbody {
+    tr {
+      border-bottom: 1px solid var(--border-color);
+      transition: background-color 0.2s ease;
+
+      &:hover {
+        background-color: var(--bg-hover);
+      }
+
+      &.selected {
+        background-color: var(--bg-active);
+      }
+
+      &.loading-row,
+      &.empty-row {
+        &:hover {
+          background-color: transparent;
+        }
+      }
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+  }
+
+  .checkbox-col {
+    width: 50px;
+    text-align: center;
+
+    input[type='checkbox'] {
+      cursor: pointer;
+    }
+  }
+
+  .name-col {
+    min-width: 200px;
+
+    .file-name {
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 400px;
+    }
+  }
+
+  .time-col {
+    width: 180px;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .action-col {
+    width: 150px;
+  }
+
+  .loading-cell,
+  .empty-cell {
+    text-align: center;
+    padding: 48px 16px;
+
+    .loading-spinner {
+      color: var(--text-secondary);
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      color: var(--text-secondary);
+
+      svg {
+        opacity: 0.5;
+      }
+
+      p {
+        margin: 0;
+        font-size: 14px;
+      }
+    }
+  }
+}
+
+// ==================== 动画 ====================
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 响应式设计
+@media (max-width: 768px) {
+  .knowledge-content {
+    padding: 12px;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+
+    .toolbar-left,
+    .toolbar-center,
+    .toolbar-right {
+      width: 100%;
+    }
+
+    .toolbar-right {
+      flex-direction: column;
+    }
+  }
+
+  .file-table {
+    font-size: 12px;
+
+    th,
+    td {
+      padding: 8px;
+    }
+
+    .name-col .file-name {
+      max-width: 150px;
+    }
+
+    .time-col {
+      width: 120px;
+      font-size: 11px;
+    }
+
+    .action-col {
+      width: 100px;
+    }
+  }
+}
+</style>

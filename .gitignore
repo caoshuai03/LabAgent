@@ -1,0 +1,46 @@
+# @author: caoshuai.cs
+# @date: 2026-07-14 01:58:20
+# @description: LabAgent 项目本地环境、缓存、日志与构建产物忽略规则
+
+# 本地环境变量与敏感配置
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python 虚拟环境与缓存
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# 前端依赖与构建产物
+node_modules/
+coverage/
+dist-ssr/
+*.tsbuildinfo
+.eslintcache
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+*~
+
+# IDE 与操作系统文件
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
