@@ -46,7 +46,7 @@
             v-if="chatStore.isStreaming"
             class="action-button stop-button"
             v-tooltip="'停止生成'"
-            @click="handleStop"
+            @click="handleStop()"
           >
             <svg
               stroke="currentColor"
@@ -91,7 +91,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
-import { resumeReactAgent, sendReactAgentMessage } from '../api/chat'
+import { cancelReactAgent, resumeReactAgent, sendReactAgentMessage } from '../api/chat'
 
 const chatStore = useChatStore()
 
@@ -188,6 +188,9 @@ const createStreamCallbacks = (streamTask) => ({
     if (!lastMessage) return
 
     if (typeof data === 'object' && data.event_type) {
+      if (data.trace_id) {
+        streamTask.traceId = data.trace_id
+      }
       handleStreamEvent(data, streamTask, lastMessage)
       return
     }
@@ -328,6 +331,7 @@ const handleSend = async () => {
     currentUserMessage: message,
     sessionIdReceived: false,
     abortController: null,
+    traceId: null,
     paused: false,
   }
 
@@ -455,7 +459,14 @@ const handleStop = async (conversationKey = chatStore.activeConversationKey) => 
     return
   }
 
+  const cancelRequest = streamTask?.traceId && !chatStore.isDraftConversationKey(conversationKey)
+    ? cancelReactAgent({ sessionId: conversationKey, traceId: streamTask.traceId }).catch((error) => {
+        console.error('服务端停止生成失败:', error)
+      })
+    : null
+
   await finalizeStreamTask(conversationKey, { abort: true })
+  await cancelRequest
 }
 
 watch(

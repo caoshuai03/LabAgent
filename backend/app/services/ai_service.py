@@ -52,6 +52,32 @@ def _messages_from_update(chunk: Any, node_name: str) -> list[Any]:
 class AiService:
     """RAG + Agent 对话编排。"""
 
+    def __init__(self) -> None:
+        self._running_tasks: dict[str, tuple[int, str, asyncio.Task[Any]]] = {}
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
+
+    def _schedule_cancel_cleanup(self, trace_id: str) -> None:
+        """在独立任务中清理已取消的工具记录，避免请求取消作用域中断数据库操作。"""
+        task = asyncio.create_task(self._cancel_running_tools(trace_id))
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._handle_cleanup_done)
+
+    def _handle_cleanup_done(self, task: asyncio.Task[None]) -> None:
+        """回收取消清理任务并记录异常。"""
+        self._cleanup_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Agent取消清理任务被中断")
+        except Exception:  # noqa: BLE001 - 后台清理异常只记录日志
+            logger.exception("Agent取消清理失败")
+
+    async def _cancel_running_tools(self, trace_id: str) -> None:
+        """将指定运行中尚未结束的工具调用标记为已取消。"""
+        async with async_session_factory() as db:
+            await ToolCallService(db).cancel_running(trace_id)
+            await db.commit()
+
     async def stream_chat(
         self,
         message: str,
@@ -128,6 +154,22 @@ class AiService:
         ):
             yield event
 
+    async def cancel_run(self, session_id: str, trace_id: str, user_id: int) -> bool:
+        """取消当前用户指定会话中的 Agent 运行。"""
+        async with async_session_factory() as db:
+            await SessionService(db).get_owned_session(session_id, user_id)
+
+        running = self._running_tasks.get(trace_id)
+        if running is None:
+            return False
+
+        running_user_id, running_session_id, task = running
+        if running_user_id != user_id or running_session_id != session_id or task.done():
+            return False
+
+        task.cancel()
+        return True
+
     async def _stream_graph(
         self,
         graph_input: dict[str, Any] | Command,
@@ -152,6 +194,9 @@ class AiService:
         seen_tool_results: set[str] = set()
         paused = False
         sid = uuid.UUID(session_id)
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._running_tasks[trace_id] = (user_id, session_id, current_task)
 
         try:
             async with asyncio.timeout(settings.agent_timeout_seconds):
@@ -347,9 +392,7 @@ class AiService:
                 {"done": True, "tool_call_count": len(seen_tool_calls)},
             )
         except TimeoutError:
-            async with async_session_factory() as db:
-                await ToolCallService(db).cancel_running(record_trace_id)
-                await db.commit()
+            await self._cancel_running_tools(record_trace_id)
             yield _sse_event(
                 "status",
                 session_id,
@@ -358,16 +401,16 @@ class AiService:
             )
             yield _sse_event("error", session_id, trace_id, {"message": "Agent执行超时，请稍后重试"})
         except asyncio.CancelledError:
-            async with async_session_factory() as db:
-                await ToolCallService(db).cancel_running(record_trace_id)
-                await db.commit()
-            raise
+            self._schedule_cancel_cleanup(record_trace_id)
+            return
         except Exception:  # noqa: BLE001 - SSE 中返回受控错误
             logger.exception("Agent流式生成失败: session_id=%s, trace_id=%s", session_id, trace_id)
-            async with async_session_factory() as db:
-                await ToolCallService(db).cancel_running(record_trace_id)
-                await db.commit()
+            await self._cancel_running_tools(record_trace_id)
             yield _sse_event("error", session_id, trace_id, {"message": "模型或工具服务异常，请稍后重试"})
+        finally:
+            running = self._running_tasks.get(trace_id)
+            if running is not None and running[2] is current_task:
+                self._running_tasks.pop(trace_id, None)
 
     async def _persist_status_event(self, session_id: uuid.UUID, payload: dict[str, Any]) -> None:
         """将工具 custom 状态事件同步到数据库。"""

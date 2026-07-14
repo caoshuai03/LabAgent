@@ -79,6 +79,13 @@ export const resumeReactAgent = (params, callbacks) => {
   )
 }
 
+export const cancelReactAgent = ({ sessionId, traceId }) => {
+  return apiClient.post('/v1/ai/react-agent/cancel', {
+    session_id: sessionId,
+    trace_id: traceId,
+  })
+}
+
 export const getAgentTools = () => {
   return apiClient.get('/v1/ai/tools')
 }

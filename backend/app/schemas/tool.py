@@ -17,6 +17,13 @@ class AgentResumeRequest(BaseModel):
     approved: bool
 
 
+class AgentCancelRequest(BaseModel):
+    """Agent 运行取消请求。"""
+
+    session_id: str
+    trace_id: str
+
+
 class ToolDefinitionVO(BaseModel):
     """当前用户可见的工具定义。"""
 
