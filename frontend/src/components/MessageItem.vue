@@ -41,50 +41,6 @@
         <div class="message-footer">
           <div v-if="showMessageActions" class="message-actions">
             <button
-              @click="toggleFeedback('up')"
-              :class="['action-button', { active: feedbackState === 'up' }]"
-              v-tooltip="feedbackState === 'up' ? '取消点赞' : '点赞'"
-            >
-              <svg
-                class="thumb-icon"
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M7.75 10.25h2.1v8.5h-2.1a1.15 1.15 0 0 1-1.15-1.15V11.4c0-.64.51-1.15 1.15-1.15Z"></path>
-                <path d="M9.85 10.6 12.1 4.75c.22-.58.88-.88 1.45-.63.89.38 1.4 1.38 1.22 2.33l-.55 2.8h3.54c1.16 0 1.97 1.11 1.63 2.21l-1.41 4.55a1.8 1.8 0 0 1-1.71 1.24H9.85"></path>
-              </svg>
-            </button>
-
-            <button
-              @click="toggleFeedback('down')"
-              :class="['action-button', { active: feedbackState === 'down' }]"
-              v-tooltip="feedbackState === 'down' ? '取消点踩' : '点踩并反馈'"
-            >
-              <svg
-                class="thumb-icon"
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M16.25 13.75h-2.1v-8.5h2.1c.64 0 1.15.51 1.15 1.15v6.2c0 .64-.51 1.15-1.15 1.15Z"></path>
-                <path d="M14.15 13.4 11.9 19.25c-.22.58-.88.88-1.45.63-.89-.38-1.4-1.38-1.22-2.33l.55-2.8H6.24c-1.16 0-1.97-1.11-1.63-2.21l1.41-4.55a1.8 1.8 0 0 1 1.71-1.24h6.42"></path>
-              </svg>
-            </button>
-
-            <button
               @click="handleCopy"
               :class="['action-button', { copied: copied }]"
               v-tooltip="copied ? '已复制' : '复制'"
@@ -119,16 +75,8 @@
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
               </svg>
             </button>
+            <span v-if="messageTime" class="message-time">{{ messageTime }}</span>
           </div>
-
-          <FeedbackModal
-            v-if="showFeedbackModal"
-            :message-content="message.content"
-            :session-id="chatStore.currentConversationId"
-            :initial-type="3"
-            @close="closeFeedbackModal"
-            @success="handleFeedbackSuccess"
-          />
         </div>
       </div>
     </div>
@@ -139,7 +87,6 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { renderMarkdown } from '../utils/markdown'
-import FeedbackModal from './FeedbackModal.vue'
 import ToolActivityPanel from './ToolActivityPanel.vue'
 import ToolApprovalInline from './ToolApprovalInline.vue'
 
@@ -155,13 +102,30 @@ const props = defineProps({
 const chatStore = useChatStore()
 const messageTextRef = ref(null)
 const copied = ref(false)
-const showFeedbackModal = ref(false)
 
 const showMessageActions = computed(() => {
   return props.message.sender === 'assistant' && props.message.isComplete
 })
 
-const feedbackState = computed(() => props.message.feedbackState || null)
+const messageTime = computed(() => {
+  if (!props.message.timestamp) return ''
+
+  const timestampValue = String(props.message.timestamp)
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestampValue)
+  const timestamp = new Date(hasTimezone ? timestampValue : `${timestampValue}Z`)
+  if (Number.isNaN(timestamp.getTime())) return ''
+
+  const timeParts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: 'numeric',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(timestamp)
+  const hour = timeParts.find(({ type }) => type === 'hour')?.value
+  const minute = timeParts.find(({ type }) => type === 'minute')?.value
+
+  return hour && minute ? `${Number(hour)}:${minute}` : ''
+})
 
 const sources = computed(() => {
   return Array.isArray(props.message.sources) ? props.message.sources : []
@@ -187,36 +151,6 @@ const formatContent = (content) => {
   }
 
   return content.replace(/\n/g, '<br>').replace(/ {2}/g, '&nbsp;&nbsp;')
-}
-
-const openFeedbackModal = () => {
-  showFeedbackModal.value = true
-}
-
-const closeFeedbackModal = () => {
-  showFeedbackModal.value = false
-}
-
-const handleFeedbackSuccess = () => {
-  chatStore.setMessageFeedbackState(props.message.id, 'down')
-}
-
-const toggleFeedback = (type) => {
-  const currentState = feedbackState.value
-
-  if (currentState === type) {
-    chatStore.setMessageFeedbackState(props.message.id, null)
-    closeFeedbackModal()
-    return
-  }
-
-  chatStore.setMessageFeedbackState(props.message.id, type)
-
-  if (type === 'down') {
-    openFeedbackModal()
-  } else {
-    closeFeedbackModal()
-  }
 }
 
 const handleCopy = async () => {
@@ -487,35 +421,36 @@ watch(
 
   :deep(.code-block-wrapper) {
     margin: 1em 0;
-    border-radius: 8px;
+    border-radius: 14px;
     overflow: hidden;
-    background-color: #f6f8fa;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    background-color: var(--bg-secondary, #f4f4f4);
+    border: none;
     position: relative;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: none;
 
     .code-block-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 16px;
-      background-color: rgba(0, 0, 0, 0.03);
-      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      min-height: 42px;
+      padding: 10px 16px 2px;
+      background-color: transparent;
+      border-bottom: none;
 
       .code-block-lang {
-        font-size: 12px;
-        color: #656d76;
-        font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', monospace;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        font-weight: 500;
+        color: var(--text-secondary, #626262);
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 400;
+        letter-spacing: 0;
+        text-transform: lowercase;
       }
 
       .code-block-copy {
-        padding: 6px;
+        padding: 5px;
         background-color: transparent;
         border: none;
-        color: var(--text-tertiary);
+        color: var(--text-tertiary, #858585);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -524,8 +459,8 @@ watch(
         border-radius: 6px;
 
         svg {
-          width: 16px;
-          height: 16px;
+          width: 18px;
+          height: 18px;
         }
 
         &:hover {
@@ -541,7 +476,7 @@ watch(
 
     pre {
       margin: 0;
-      padding: 16px;
+      padding: 14px 16px 18px;
       border-radius: 0;
       overflow-x: auto;
       background-color: transparent;
@@ -549,9 +484,9 @@ watch(
       code {
         padding: 0;
         background-color: transparent;
-        font-size: 0.875em;
-        line-height: 1.6;
-        color: #24292f;
+        font-size: 0.92em;
+        line-height: 1.55;
+        color: var(--text-primary, #242424);
         font-family:
           'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', 'Courier New',
           monospace;
@@ -738,7 +673,24 @@ watch(
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
+  gap: 8px;
+}
+
+.message-time {
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 13px;
+  line-height: 28px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s ease;
+}
+
+.message-item:hover .message-time,
+.message-item:focus-within .message-time {
+  opacity: 1;
+  visibility: visible;
 }
 
 .action-button {
@@ -768,17 +720,9 @@ watch(
     background-color: var(--bg-hover);
   }
 
-  &.copied,
-  &.active {
+  &.copied {
     color: #90138b;
     background: rgba(144, 19, 139, 0.08);
   }
-}
-
-.thumb-icon {
-  width: 21px !important;
-  height: 21px !important;
-  transform: scale(1.08);
-  transform-origin: center;
 }
 </style>

@@ -239,7 +239,7 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
   position: relative;
   transition: all 0.2s;
-  height: 44px;
+  height: 36px;
 
   &:hover {
     background-color: rgba(144, 19, 139, 0.03);

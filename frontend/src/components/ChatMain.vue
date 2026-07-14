@@ -53,8 +53,8 @@
 
     <div v-if="chatStore.messages.length === 0" class="welcome-container">
       <div class="welcome-content">
-        <h2>Java实验助手</h2>
-        <p>我可以为您解答Java实验相关的问题，请把您的任务交给我吧~</p>
+        <h2>你的实验助手</h2>
+        <p>我可以为您解答实验相关的问题，请把您的任务交给我吧~</p>
       </div>
     </div>
 

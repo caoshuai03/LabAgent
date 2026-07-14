@@ -114,7 +114,7 @@ const handleEnterBatchMode = () => {
     padding: 8px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 0;
   }
 }
 </style>
