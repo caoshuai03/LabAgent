@@ -10,9 +10,8 @@ import apiClient from './index'
  * @param {number} userId - 用户ID
  * @returns {Promise} 会话列表
  */
-export const getUserSessions = (userId) => {
-  // 使用 POST 请求获取用户会话列表
-  return apiClient.post('/v1/ai/rag/sessions', { user_id: userId })
+export const getUserSessions = () => {
+  return apiClient.post('/v1/ai/rag/sessions')
 }
 
 /**
@@ -21,9 +20,8 @@ export const getUserSessions = (userId) => {
  * @param {number} userId - 用户ID（用于权限校验）
  * @returns {Promise} 消息列表
  */
-export const getSessionHistory = (sessionId, userId = 1) => {
-  // 使用 POST 请求获取会话历史消息，增加用户ID校验
-  return apiClient.post('/v1/ai/rag/history', { session_id: sessionId, user_id: userId })
+export const getSessionHistory = (sessionId) => {
+  return apiClient.post('/v1/ai/rag/history', { session_id: sessionId })
 }
 
 /**
@@ -32,9 +30,8 @@ export const getSessionHistory = (sessionId, userId = 1) => {
  * @param {number} userId - 用户ID（用于权限校验）
  * @returns {Promise} 删除结果，true表示成功
  */
-export const deleteSession = (sessionId, userId = 1) => {
-  // 改为 POST 请求，增加用户ID校验
-  return apiClient.post('/v1/ai/rag/sessions/delete', { session_id: sessionId, user_id: userId })
+export const deleteSession = (sessionId) => {
+  return apiClient.post('/v1/ai/rag/sessions/delete', { session_id: sessionId })
 }
 
 /**
@@ -43,8 +40,8 @@ export const deleteSession = (sessionId, userId = 1) => {
  * @param {number} userId - 用户ID（用于权限校验）
  * @returns {Promise} 删除结果，true表示成功
  */
-export const deleteSessions = (sessionIds, userId = 1) => {
-  return apiClient.post('/v1/ai/rag/sessions/delete', { session_ids: sessionIds, user_id: userId })
+export const deleteSessions = (sessionIds) => {
+  return apiClient.post('/v1/ai/rag/sessions/delete', { session_ids: sessionIds })
 }
 
 /**
@@ -65,11 +62,28 @@ export const deleteSessions = (sessionIds, userId = 1) => {
  * @returns {AbortController} 用于取消请求的控制器
  */
 export const sendReactAgentMessage = (params, callbacks) => {
-  return sendSseMessage('/api/v1/ai/react-agent', params, callbacks)
+  const { message, sessionId = '', model } = params
+  return sendSseRequest(
+    '/api/v1/ai/react-agent',
+    { message, session_id: sessionId, model },
+    callbacks,
+  )
 }
 
-const sendSseMessage = (url, params, callbacks) => {
-  const { message, sessionId = '', userId = 1, model } = params
+export const resumeReactAgent = (params, callbacks) => {
+  const { sessionId, interruptId, approved } = params
+  return sendSseRequest(
+    '/api/v1/ai/react-agent/resume',
+    { session_id: sessionId, interrupt_id: interruptId, approved },
+    callbacks,
+  )
+}
+
+export const getAgentTools = () => {
+  return apiClient.get('/v1/ai/tools')
+}
+
+const sendSseRequest = (url, body, callbacks) => {
   const { onMessage, onError, onComplete } = callbacks
 
   const controller = new AbortController()
@@ -89,7 +103,7 @@ const sendSseMessage = (url, params, callbacks) => {
   fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ message, session_id: sessionId, user_id: userId, model }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   })
     .then(async (response) => {

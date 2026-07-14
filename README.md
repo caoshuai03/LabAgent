@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-- 后端：FastAPI + Uvicorn、SQLAlchemy 2.0 (async) + asyncpg、Alembic、LangGraph、Pydantic v2
+- 后端：FastAPI + Uvicorn、SQLAlchemy 2.0 (async) + asyncpg、Alembic、LangGraph（StateGraph / ToolNode）、LangChain Tools、Pydantic v2
 - 前端：Vue 3 + Vue Router + Pinia + Vite + axios
 - 中间件：PostgreSQL (pgvector)、MinIO
 - 模型：Ollama（本地）/ OpenAI 兼容接口
@@ -16,11 +16,12 @@ LabAgent/
 ├── backend/            # FastAPI 后端
 │   ├── app/            # 应用代码（api / core / db / graph / models / repositories / schemas / services）
 │   ├── alembic/        # 数据库迁移
+│   ├── tool_runner/     # Shell 工具内部沙箱执行服务
 │   └── pyproject.toml
 ├── frontend/           # Vue3 前端
 ├── sql/init.sql        # PostgreSQL 扩展初始化（表结构由 Alembic 管理）
 ├── docs/               # 产品与设计文档
-├── docker-compose.yml  # 中间件 + 后端 + 前端 编排
+├── docker-compose.yml  # 中间件 + 后端 + 前端 + 内部 Tool Runner 编排
 └── AGENTS.md           # 开发规范
 ```
 
@@ -89,11 +90,14 @@ docker compose up -d --build
 
 - 前端：`http://localhost:8080`
 - 后端：`http://localhost:8989`
+- Tool Runner：仅连接 Docker 内部网络，不暴露宿主机端口
 - 使用 Ollama 时，容器内通过 `http://host.docker.internal:11434` 访问宿主机模型服务
 
 ## 配置说明
 
-环境变量参考根目录 [.env.example](.env.example)，主要包含：数据库连接、JWT 密钥、MinIO 连接、模型服务（Ollama / OpenAI 兼容）、对话记忆窗口、文件上传限制等。生产环境务必替换 `JWT_SECRET_KEY` 等敏感项。
+环境变量参考根目录 [.env.example](.env.example)，主要包含：数据库连接、JWT 密钥、MinIO 连接、模型服务（Ollama / OpenAI 兼容）、对话记忆窗口、文件上传限制、Agent 工具开关、工作区限制、执行超时和 Tool Runner 认证等。生产环境务必替换 `JWT_SECRET_KEY`、`TOOL_RUNNER_TOKEN` 等敏感项。
+
+文件工具通过会话独立工作区运行。Shell 工具已完成链路集成但默认关闭；启用时必须配置 `SHELL_TOOL_ENABLED=true` 和非默认的 `TOOL_RUNNER_TOKEN`，并保留独立 Tool Runner 沙箱与角色权限。普通命令直接执行，文件删除和 Shell 删除类命令在助手消息内请求用户确认。
 
 ## 约定
 

@@ -17,7 +17,8 @@
 要从javalabagent迁移过来
 第一阶段已完成 done，产出文档：[第一阶段：产品与架构设计](./docs/01-产品与架构设计.md)
 第二阶段设计已完成 done，产出文档：[第二阶段：基础后端设计](./docs/02-基础后端设计.md)
-当前进入第三阶段开发 todo
+第三阶段已完成 done，产出文档：[第三阶段：RAG闭环设计](./docs/03-RAG闭环设计.md)、[RAG全流程实现与理解](./docs/04-RAG全流程实现与理解.md)
+第四阶段已完成 done，产出文档：[第四阶段：Agent工具集成与调用链设计](./docs/05-Agent工具集成与调用链设计.md)
 做一些具体的设计之前，可以跟我先讨论具体的实现，可以先给出你的建议；
 重点要了解清楚LangGraph如何进行agent构建，对应文档[文档](https://docs.langchain.com/oss/python/langgraph/overview)
 

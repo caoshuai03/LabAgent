@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getUserSessions, getSessionHistory, deleteSession, deleteSessions } from '../api/chat'
-import { useUserStore } from './user'
 
 const CURRENT_CONVERSATION_STORAGE_KEY = 'chat_current_conversation_id'
 const DRAFT_CONVERSATION_PREFIX = '__draft_conversation__'
@@ -33,6 +32,8 @@ export const useChatStore = defineStore('chat', () => {
     messages: [],
     isLoading: false,
     isStreaming: false,
+    awaitingApproval: false,
+    pendingApproval: null,
     hasLoadedMessages: false,
   })
 
@@ -112,6 +113,14 @@ export const useChatStore = defineStore('chat', () => {
 
   const isStreaming = computed(() => {
     return getConversationState(activeConversationKey.value)?.isStreaming || false
+  })
+
+  const awaitingApproval = computed(() => {
+    return getConversationState(activeConversationKey.value)?.awaitingApproval || false
+  })
+
+  const pendingApproval = computed(() => {
+    return getConversationState(activeConversationKey.value)?.pendingApproval || null
   })
 
   const isNewConversation = computed(() => {
@@ -209,11 +218,8 @@ export const useChatStore = defineStore('chat', () => {
    */
   const deleteConversation = async (conversationId) => {
     try {
-      const userStore = useUserStore()
-      const userId = userStore.userInfo?.id || 1
-
       // 调用后端API删除会话，传递 userId 进行权限校验
-      const response = await deleteSession(conversationId, userId)
+      const response = await deleteSession(conversationId)
 
       // 删除成功后更新本地状态
       if (response.data.data === true) {
@@ -254,11 +260,8 @@ export const useChatStore = defineStore('chat', () => {
     try {
       if (!conversationIds || conversationIds.length === 0) return false
 
-      const userStore = useUserStore()
-      const userId = userStore.userInfo?.id || 1
-
       // 调用后端API批量删除会话
-      const response = await deleteSessions(conversationIds, userId)
+      const response = await deleteSessions(conversationIds)
 
       // 删除成功后更新本地状态
       if (response.data.data === true) {
@@ -413,6 +416,20 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  const setPendingApproval = (approval, conversationKey = activeConversationKey.value) => {
+    const state = ensureConversationState(conversationKey)
+    if (!state) return
+    state.pendingApproval = approval
+    state.awaitingApproval = Boolean(approval)
+  }
+
+  const clearPendingApproval = (conversationKey = activeConversationKey.value) => {
+    const state = ensureConversationState(conversationKey)
+    if (!state) return
+    state.pendingApproval = null
+    state.awaitingApproval = false
+  }
+
   /**
    * 设置指定会话最后一条助手消息的引用来源（RAG 检索命中的来源）
    * @param {Array} sources - 来源列表，每项含 file_name/snippet/score（全蛇形）
@@ -438,50 +455,50 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     try {
-      const userStore = useUserStore()
-      const userId = userStore.userInfo?.id || 1
-
       state.isLoading = true
 
-      const response = await getSessionHistory(sessionId, userId)
+      const response = await getSessionHistory(sessionId)
       const dbMessages = response.data.data || []
 
       // 转换后端消息格式为前端格式
       state.messages = dbMessages.map((msg) => {
-        let content = msg.content || ''
-        let toolEvents = []
-
-        // 解析思考过程
-        // 格式: <!-- thinking_process_start -->[...]<!-- thinking_process_end -->
-        const thinkingRegex =
-          /<!-- thinking_process_start -->([\s\S]*?)<!-- thinking_process_end -->\n?/
-        const match = content.match(thinkingRegex)
-
-        if (match) {
-          try {
-            // 解析 JSON 数组
-            const eventsJson = match[1]
-            // 后端保存的是 JSON 对象数组的字符串形式
-            const events = JSON.parse(eventsJson)
-
-            // 转换事件格式 (如果需要) - 目前看后端返回的结构和前端需要的结构基本一致
-            // 前端 MessageItem 需要 toolEvents 包含 eventType, payload 等字段
-            // 后端 eventJson 生成的正是这种结构
-            toolEvents = events
-
-            // 从内容中移除思考过程部分
-            content = content.replace(match[0], '')
-          } catch (e) {
-            console.error('解析思考过程失败:', e)
-          }
-        }
+        const content = msg.content || ''
+        const toolEvents = []
+        ;(msg.tool_calls || []).forEach((toolCall) => {
+          toolEvents.push({
+            eventType: 'tool_call',
+            payload: {
+              tool_call_id: toolCall.tool_call_id,
+              tool_name: toolCall.tool_name,
+              arguments: toolCall.arguments || {},
+              round: toolCall.round,
+              risk_level: toolCall.risk_level,
+            },
+            ts: toolCall.created_at,
+          })
+          toolEvents.push({
+            eventType: 'tool_result',
+            payload: {
+              tool_call_id: toolCall.tool_call_id,
+              tool_name: toolCall.tool_name,
+              success: toolCall.status === 'success',
+              status: toolCall.status,
+              result_summary: toolCall.result_summary,
+              output_preview: toolCall.output_preview,
+              error_message: toolCall.error_message,
+              duration_ms: toolCall.duration_ms,
+              round: toolCall.round,
+            },
+            ts: toolCall.created_at,
+          })
+        })
 
         return {
           id: msg.id || generateMessageId(),
           sender: msg.role === 'user' ? 'user' : 'assistant',
-          content: content,
+          content,
           timestamp: msg.created_at || new Date().toISOString(),
-          toolEvents: toolEvents,
+          toolEvents,
           sources: Array.isArray(msg.sources) ? msg.sources : [],
           isComplete: true,
           feedbackState: null,
@@ -505,10 +522,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   const loadConversationsFromDB = async () => {
     try {
-      const userStore = useUserStore()
-      const userId = userStore.userInfo?.id || 1
-
-      const response = await getUserSessions(userId)
+      const response = await getUserSessions()
       const dbSessions = response.data.data || []
 
       // 转换后端会话格式为前端格式
@@ -588,6 +602,8 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     isLoading,
     isStreaming,
+    awaitingApproval,
+    pendingApproval,
     sidebarCollapsed,
     needsReload,
     shouldFocusInput,
@@ -611,6 +627,8 @@ export const useChatStore = defineStore('chat', () => {
     markLastAssistantMessageComplete,
     setMessageFeedbackState,
     addToolEventToLastMessage,
+    setPendingApproval,
+    clearPendingApproval,
     setLastMessageSources,
     clearMessages,
     toggleSidebar,

@@ -67,6 +67,6 @@ def delete_by_source(source_id: str) -> int:
     return len(keys)
 
 
-def search_with_score(query: str, k: int) -> list[tuple[Document, float]]:
-    """向量相似度检索，返回 (文档, 距离分数) 列表。"""
-    return _get_vector_store().similarity_search_with_score(query, k=k)
+def search_with_relevance_scores(query: str, k: int) -> list[tuple[Document, float]]:
+    """向量相似度检索，返回 (文档, 框架归一化相关度分数) 列表。"""
+    return _get_vector_store().similarity_search_with_relevance_scores(query, k=k)

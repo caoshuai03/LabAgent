@@ -1,26 +1,33 @@
 """
 @author: caoshuai.cs
-@date: 2026-07-12
-@description: AI 对话编排服务——串联会话/消息业务与 LangGraph 图；SSE 流式输出，上下文由 checkpointer 管理
+@date: 2026-07-15 00:41
+@description: AI 对话编排服务——RAG + Agent ToolNode 流式调用、人工审批恢复、工具事件持久化
 """
+import asyncio
 import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langgraph.types import Command
 
+from app.core.config import settings
 from app.db.session import async_session_factory
 from app.graph.chat_graph import get_chat_graph
 from app.services.message_service import MessageService
 from app.services.session_service import SessionService
+from app.services.tool_call_service import ToolCallService
+from app.tools.registry import tool_registry
+from app.tools.result import parse_result_envelope, redact_value, truncate_text
 
 logger = logging.getLogger("labagent")
 
 
-def _sse_event(event_type: str, session_id: str, trace_id: str, payload: dict) -> str:
-    """组装一条 SSE data 行（JSON）。"""
+def _sse_event(event_type: str, session_id: str, trace_id: str, payload: dict[str, Any]) -> str:
+    """组装一条 SSE data 行。"""
     data = {
         "event_type": event_type,
         "session_id": session_id,
@@ -31,79 +38,360 @@ def _sse_event(event_type: str, session_id: str, trace_id: str, payload: dict) -
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _messages_from_update(chunk: Any, node_name: str) -> list[Any]:
+    """从 updates 流的指定节点提取消息。"""
+    if not isinstance(chunk, dict):
+        return []
+    node_update = chunk.get(node_name)
+    if not isinstance(node_update, dict):
+        return []
+    messages = node_update.get("messages")
+    return list(messages) if isinstance(messages, list) else []
+
+
 class AiService:
-    """AI 对话编排。自管理数据库会话，以适配流式响应生命周期。"""
+    """RAG + Agent 对话编排。"""
 
     async def stream_chat(
-        self, message: str, session_id: str | None, user_id: int, model: str | None
+        self,
+        message: str,
+        session_id: str | None,
+        user_id: int,
+        user_role: int,
+        model: str | None,
     ) -> AsyncGenerator[str, None]:
-        """执行一次对话：准备会话→存用户消息→图流式生成→存助手消息，产出 SSE。"""
+        """开始新的 Agent 运行。"""
         trace_id = uuid.uuid4().hex
-        start = time.time()
-
-        # 1. 准备会话并持久化用户消息（业务表）
         async with async_session_factory() as db:
             session_service = SessionService(db)
-            message_service = MessageService(db)
             chat_session = await session_service.get_or_create_session(session_id, user_id, message)
             sid = chat_session.id
-            await message_service.save_message(sid, user_id, "user", message)
+            await MessageService(db).save_message(sid, user_id, "user", message)
             await db.commit()
 
         session_id_str = str(sid)
         yield _sse_event("session", session_id_str, trace_id, {"session_id": session_id_str})
+        graph_input = {
+            "messages": [HumanMessage(content=message)],
+            "user_id": user_id,
+            "user_role": user_role,
+            "session_id": session_id_str,
+            "model_name": model,
+            "agent_run_id": trace_id,
+            "tool_round": 0,
+            "documents": [],
+            "sources": [],
+        }
+        async for event in self._stream_graph(
+            graph_input,
+            session_id=session_id_str,
+            user_id=user_id,
+            model=model,
+            trace_id=trace_id,
+            record_trace_id=trace_id,
+        ):
+            yield event
 
-        # 2. 通过 LangGraph 检索增强图流式生成（上下文由 checkpointer 按 thread_id 恢复）
-        # thread_id 绑定 user_id：复用 checkpointer 原生 thread 隔离能力，按「用户+会话」双键隔离记忆，
-        # 即使拿到他人 session_id 也凑不出正确 thread_id，与业务归属校验形成双保险
+    async def stream_resume(
+        self,
+        session_id: str,
+        interrupt_id: str,
+        approved: bool,
+        user_id: int,
+    ) -> AsyncGenerator[str, None]:
+        """在用户批准或拒绝后恢复暂停的 Agent 图。"""
+        trace_id = uuid.uuid4().hex
+        async with async_session_factory() as db:
+            await SessionService(db).get_owned_session(session_id, user_id)
+
         graph = get_chat_graph()
-        thread_id = f"{user_id}:{session_id_str}"
-        config = {"configurable": {"thread_id": thread_id, "model": model}}
-        full_response: list[str] = []
-        response_sources: list[dict[str, str | float | None]] = []
-        try:
-            # 双模式：messages 捕获生成 token，custom 捕获检索图回传的引用来源
-            async for stream_mode, chunk in graph.astream(
-                {"messages": [HumanMessage(content=message)]},
-                config=config,
-                stream_mode=["messages", "custom"],
-            ):
-                if stream_mode == "custom":
-                    sources = chunk.get("sources") if isinstance(chunk, dict) else None
-                    if isinstance(sources, list):
-                        response_sources = sources
-                    if response_sources:
-                        yield _sse_event("sources", session_id_str, trace_id, {"sources": response_sources})
-                    continue
-                # messages 模式：(消息块, 元数据)，仅取 generate 节点 token，避免 rerank 的 LLM 输出混入
-                token, meta = chunk
-                if (meta or {}).get("langgraph_node") != "generate":
-                    continue
-                # 只取流式增量块 AIMessageChunk；generate 节点结束时返回的完整 AIMessage
-                # 也会作为 messages 事件发出，若不过滤会导致整段回答被重复输出一次
-                if not isinstance(token, AIMessageChunk):
-                    continue
-                content = getattr(token, "content", "")
-                if content:
-                    full_response.append(content)
-                    yield _sse_event("token", session_id_str, trace_id, {"content": content})
-        except Exception as exc:  # noqa: BLE001 - 流式失败需返回错误事件而非中断连接
-            logger.exception("对话流式生成失败: session_id=%s, trace_id=%s", session_id_str, trace_id)
-            yield _sse_event("error", session_id_str, trace_id, {"message": "模型服务异常，请稍后重试"})
+        config = {"configurable": {"thread_id": f"{user_id}:{session_id}"}}
+        snapshot = await graph.aget_state(config)
+        values = snapshot.values if snapshot is not None else {}
+        if not values or str(values.get("session_id", "")) != session_id:
+            yield _sse_event("error", session_id, trace_id, {"message": "未找到可恢复的Agent状态"})
+            return
+        pending_interrupts = getattr(snapshot, "interrupts", ()) or ()
+        if interrupt_id not in {str(getattr(item, "id", "")) for item in pending_interrupts}:
+            yield _sse_event("error", session_id, trace_id, {"message": "工具审批已失效或不属于当前会话"})
             return
 
-        # 3. 持久化助手消息并刷新会话时间（业务表）
-        answer = "".join(full_response)
-        if answer:
-            async with async_session_factory() as db:
-                await MessageService(db).save_message(
-                    sid, user_id, "assistant", answer, sources=response_sources
-                )
-                await SessionService(db).touch(sid)
-                await db.commit()
+        model = values.get("model_name")
+        record_trace_id = str(values.get("agent_run_id") or trace_id)
+        async for event in self._stream_graph(
+            Command(resume={"approved": approved}),
+            session_id=session_id,
+            user_id=user_id,
+            model=model if isinstance(model, str) else None,
+            trace_id=trace_id,
+            record_trace_id=record_trace_id,
+        ):
+            yield event
 
-        logger.info(
-            "对话完成: session_id=%s, trace_id=%s, answer_length=%d, cost=%dms",
-            session_id_str, trace_id, len(answer), int((time.time() - start) * 1000),
-        )
-        yield _sse_event("final", session_id_str, trace_id, {"done": True})
+    async def _stream_graph(
+        self,
+        graph_input: dict[str, Any] | Command,
+        *,
+        session_id: str,
+        user_id: int,
+        model: str | None,
+        trace_id: str,
+        record_trace_id: str,
+    ) -> AsyncGenerator[str, None]:
+        """执行或恢复图，把框架流转换为前端 SSE。"""
+        started = time.monotonic()
+        graph = get_chat_graph()
+        config = {
+            "configurable": {"thread_id": f"{user_id}:{session_id}", "model": model},
+            "recursion_limit": max(settings.agent_max_tool_rounds * 4 + 10, 30),
+        }
+        full_response: list[str] = []
+        final_content = ""
+        response_sources: list[dict[str, str | float | None]] = []
+        seen_tool_calls: set[str] = set()
+        seen_tool_results: set[str] = set()
+        paused = False
+        sid = uuid.UUID(session_id)
+
+        try:
+            async with asyncio.timeout(settings.agent_timeout_seconds):
+                async for stream_mode, chunk in graph.astream(
+                    graph_input,
+                    config=config,
+                    stream_mode=["messages", "updates", "custom"],
+                ):
+                    if stream_mode == "custom":
+                        if isinstance(chunk, dict) and isinstance(chunk.get("sources"), list):
+                            response_sources = chunk["sources"]
+                            if response_sources:
+                                yield _sse_event("sources", session_id, trace_id, {"sources": response_sources})
+                        tool_event = chunk.get("tool_event") if isinstance(chunk, dict) else None
+                        if isinstance(tool_event, dict):
+                            event_type = str(tool_event.get("event_type") or "status")
+                            payload = tool_event.get("payload") if isinstance(tool_event.get("payload"), dict) else {}
+                            await self._persist_status_event(sid, payload)
+                            yield _sse_event(event_type, session_id, trace_id, payload)
+                        continue
+
+                    if stream_mode == "messages":
+                        token, meta = chunk
+                        if (meta or {}).get("langgraph_node") != "agent":
+                            continue
+                        if not isinstance(token, AIMessageChunk):
+                            continue
+                        content = token.content
+                        if isinstance(content, str) and content:
+                            full_response.append(content)
+                            yield _sse_event("token", session_id, trace_id, {"content": content})
+                        continue
+
+                    if stream_mode != "updates" or not isinstance(chunk, dict):
+                        continue
+
+                    for message in _messages_from_update(chunk, "agent"):
+                        if not isinstance(message, AIMessage):
+                            continue
+                        if not message.tool_calls:
+                            if isinstance(message.content, str):
+                                final_content = message.content
+                            continue
+                        round_number = int((chunk.get("agent") or {}).get("tool_round", 1))
+                        for call in message.tool_calls:
+                            call_id = str(call.get("id", ""))
+                            if not call_id or call_id in seen_tool_calls:
+                                continue
+                            seen_tool_calls.add(call_id)
+                            tool_name = str(call.get("name", ""))
+                            arguments = call.get("args") if isinstance(call.get("args"), dict) else {}
+                            metadata = tool_registry.metadata(tool_name)
+                            if metadata is None:
+                                continue
+                            safe_arguments = redact_value(arguments)
+                            async with async_session_factory() as db:
+                                await ToolCallService(db).ensure_pending(
+                                    sid,
+                                    user_id,
+                                    record_trace_id,
+                                    call_id,
+                                    tool_name,
+                                    metadata.source,
+                                    metadata.risk_level,
+                                    safe_arguments if isinstance(safe_arguments, dict) else {},
+                                    round_number,
+                                )
+                                await db.commit()
+                            yield _sse_event(
+                                "tool_call",
+                                session_id,
+                                trace_id,
+                                {
+                                    "tool_call_id": call_id,
+                                    "tool_name": tool_name,
+                                    "arguments": safe_arguments,
+                                    "round": round_number,
+                                    "risk_level": metadata.risk_level,
+                                },
+                            )
+
+                    for message in _messages_from_update(chunk, "tools"):
+                        if not isinstance(message, ToolMessage):
+                            continue
+                        call_id = str(message.tool_call_id)
+                        if not call_id or call_id in seen_tool_results:
+                            continue
+                        seen_tool_results.add(call_id)
+                        result = parse_result_envelope(message.content)
+                        success = bool(result.get("success", True))
+                        summary = truncate_text(str(result.get("summary") or "工具执行完成"), 500)
+                        error_message = result.get("error")
+                        duration_ms = result.get("duration_ms")
+                        tool_name = message.name or "tool"
+                        output_preview: str | None = None
+                        if tool_name == "execute_shell" and result.get("output"):
+                            output_preview = truncate_text(
+                                str(redact_value(result.get("output") or ""))
+                            )
+                        async with async_session_factory() as db:
+                            await ToolCallService(db).update_status(
+                                sid,
+                                call_id,
+                                "success" if success else "failed",
+                                result_summary=summary,
+                                output_preview=output_preview,
+                                error_message=str(error_message) if error_message else None,
+                                duration_ms=int(duration_ms) if isinstance(duration_ms, int | float) else None,
+                            )
+                            await db.commit()
+                        result_payload = {
+                            "tool_call_id": call_id,
+                            "tool_name": tool_name,
+                            "success": success,
+                            "result_summary": summary,
+                            "duration_ms": duration_ms,
+                        }
+                        if output_preview is not None:
+                            result_payload["output_preview"] = output_preview
+                        yield _sse_event(
+                            "tool_result",
+                            session_id,
+                            trace_id,
+                            result_payload,
+                        )
+
+                    interrupts = chunk.get("__interrupt__")
+                    if interrupts:
+                        interrupt_items = interrupts if isinstance(interrupts, (list, tuple)) else [interrupts]
+                        for interrupt_item in interrupt_items:
+                            interrupt_id = str(getattr(interrupt_item, "id", ""))
+                            value = getattr(interrupt_item, "value", {})
+                            payload = value if isinstance(value, dict) else {"value": value}
+                            calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
+                            async with async_session_factory() as db:
+                                service = ToolCallService(db)
+                                for call in calls:
+                                    if isinstance(call, dict) and call.get("tool_call_id"):
+                                        await service.update_status(
+                                            sid,
+                                            str(call["tool_call_id"]),
+                                            "pending_approval",
+                                            interrupt_id=interrupt_id,
+                                        )
+                                await db.commit()
+                            approval_payload = {**payload, "interrupt_id": interrupt_id}
+                            yield _sse_event("tool_approval_required", session_id, trace_id, approval_payload)
+                            yield _sse_event(
+                                "paused",
+                                session_id,
+                                trace_id,
+                                {"reason": "tool_approval", "interrupt_id": interrupt_id},
+                            )
+                            paused = True
+                        break
+
+            if paused:
+                return
+
+            if not response_sources:
+                snapshot = await graph.aget_state(config)
+                sources = snapshot.values.get("sources", []) if snapshot is not None else []
+                if isinstance(sources, list):
+                    response_sources = sources
+
+            answer = "".join(full_response) or final_content
+            if answer and not full_response:
+                yield _sse_event("token", session_id, trace_id, {"content": answer})
+            if answer:
+                async with async_session_factory() as db:
+                    message = await MessageService(db).save_message(
+                        sid,
+                        user_id,
+                        "assistant",
+                        answer,
+                        sources=response_sources,
+                    )
+                    await ToolCallService(db).link_message(record_trace_id, message.id)
+                    await SessionService(db).touch(sid)
+                    await db.commit()
+
+            logger.info(
+                "Agent对话完成: session_id=%s, trace_id=%s, answer_length=%d, cost=%dms",
+                session_id,
+                trace_id,
+                len(answer),
+                int((time.monotonic() - started) * 1000),
+            )
+            yield _sse_event(
+                "final",
+                session_id,
+                trace_id,
+                {"done": True, "tool_call_count": len(seen_tool_calls)},
+            )
+        except TimeoutError:
+            async with async_session_factory() as db:
+                await ToolCallService(db).cancel_running(record_trace_id)
+                await db.commit()
+            yield _sse_event(
+                "status",
+                session_id,
+                trace_id,
+                {"stage": "global_timeout", "timeout_seconds": settings.agent_timeout_seconds},
+            )
+            yield _sse_event("error", session_id, trace_id, {"message": "Agent执行超时，请稍后重试"})
+        except asyncio.CancelledError:
+            async with async_session_factory() as db:
+                await ToolCallService(db).cancel_running(record_trace_id)
+                await db.commit()
+            raise
+        except Exception:  # noqa: BLE001 - SSE 中返回受控错误
+            logger.exception("Agent流式生成失败: session_id=%s, trace_id=%s", session_id, trace_id)
+            async with async_session_factory() as db:
+                await ToolCallService(db).cancel_running(record_trace_id)
+                await db.commit()
+            yield _sse_event("error", session_id, trace_id, {"message": "模型或工具服务异常，请稍后重试"})
+
+    async def _persist_status_event(self, session_id: uuid.UUID, payload: dict[str, Any]) -> None:
+        """将工具 custom 状态事件同步到数据库。"""
+        call_id = payload.get("tool_call_id")
+        stage = payload.get("stage")
+        if not call_id or not stage:
+            return
+        status_map = {
+            "tool_running": "running",
+            "tool_done": "success",
+            "tool_failed": "failed",
+            "tool_timeout": "timeout",
+            "tool_rejected": "rejected",
+            "tool_cancelled": "cancelled",
+        }
+        status = status_map.get(str(stage))
+        if status is None:
+            return
+        async with async_session_factory() as db:
+            await ToolCallService(db).update_status(
+                session_id,
+                str(call_id),
+                status,
+                error_message=str(payload.get("message")) if payload.get("message") else None,
+                duration_ms=int(payload["duration_ms"]) if isinstance(payload.get("duration_ms"), int | float) else None,
+            )
+            await db.commit()

@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.schemas.knowledge import KbSourceVO
+from app.schemas.tool import ChatToolCallVO
 
 
 class ChatRequest(BaseModel):
@@ -39,6 +40,7 @@ class ChatMessageVO(BaseModel):
     role: str
     content: str | None
     sources: list[KbSourceVO] = Field(default_factory=list)
+    tool_calls: list[ChatToolCallVO] = Field(default_factory=list)
     created_at: datetime
 
 

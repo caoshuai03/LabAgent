@@ -25,7 +25,7 @@
           <p class="hero-kicker">WELCOME</p>
           <h1 class="hero-title">
             <span>欢迎来到</span>
-            <span>JavaLab Agent</span>
+            <span>Lab Agent</span>
           </h1>
           <p class="hero-subtitle">
             一个好用的 Harness Agent。

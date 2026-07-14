@@ -1,7 +1,12 @@
 <template>
   <div class="message-list-wrapper">
     <div class="message-list" ref="messageListRef" @scroll="handleScroll" @wheel="handleWheel">
-      <MessageItem v-for="message in chatStore.messages" :key="message.id" :message="message" />
+      <MessageItem
+        v-for="message in chatStore.messages"
+        :key="message.id"
+        :message="message"
+        @approval-decision="$emit('approval-decision', $event)"
+      />
 
       <div v-if="chatStore.isStreaming" class="typing-indicator">
         <span></span>
@@ -37,6 +42,8 @@
 import { ref, watch, nextTick, onMounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import MessageItem from './MessageItem.vue'
+
+defineEmits(['approval-decision'])
 
 const chatStore = useChatStore()
 const messageListRef = ref(null)

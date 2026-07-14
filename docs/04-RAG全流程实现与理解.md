@@ -492,7 +492,7 @@ LangGraph checkpointer 根据 `thread_id` 保存和恢复 `MessagesState`，从�
 随后 `rag_retrieval.retrieve()` 调用：
 
 ```python
-similarity_search_with_score(query, k=settings.rag_top_k)
+similarity_search_with_relevance_scores(query, k=settings.rag_top_k)
 ```
 
 当前默认：
@@ -503,20 +503,20 @@ RAG_TOP_K=20
 
 这一步的目标不是直接选出最终答案材料，而是尽量多找一些可能相关的候选，因此叫“粗召回”。
 
-查询问题也会用同一个 Embedding 模型转换为 1024 维向量，然后 PGVector 计算查询向量与各 chunk 向量之间的距离。
+查询问题也会用同一个 Embedding 模型转换为 1024 维向量，然后 PGVector 计算查询向量与各 chunk 向量之间的距离，并由框架根据当前距离策略转换为相关度分数。
 
-### 6.3.1 距离和相似度
+### 6.3.1 距离和相关度分数
 
-当前代码按余弦距离处理结果：
+当前 PGVector 使用默认的余弦距离策略，检索代码不再手写 `1 - distance`，而是调用框架的相关度归一化接口：
 
 ```python
-similarity = 1.0 - distance
+similarity_search_with_relevance_scores(query, k=top_k)
 ```
 
-可以简化理解为：
+框架会根据 PGVector 当前配置的距离策略选择对应的相关度转换函数。可以简化理解为：
 
 - 距离越小，文本越相近。
-- 相似度越大，文本越相近。
+- 相关度分数越大，文本越相近。
 
 当前默认阈值：
 
@@ -524,9 +524,9 @@ similarity = 1.0 - distance
 RAG_SIMILARITY_THRESHOLD=0.5
 ```
 
-低于阈值的候选会被过滤掉。
+低于阈值的候选会被过滤掉。以后即使切换欧氏距离或最大内积，也应继续由框架或显式配置的 `relevance_score_fn` 负责归一化，同时重新评测阈值。
 
-注意：前端引用区域展示的 `score` 是这里保存的**向量相似度**，不是 rerank 模型重新计算出的分数。
+注意：前端引用区域展示的 `score` 是这里保存的**框架归一化向量相关度分数**，不是 rerank 模型重新计算出的分数。
 
 ### 6.4 检索失败会降级，不一定阻断回答
 
@@ -626,6 +626,8 @@ MEMORY_MAX_MESSAGES=20
 
 这里的 `token_counter=len` 实际按消息数量计数，因此当前含义是最多保留约 20 条消息，而不是 20 个真实 token。
 
+> TODO（Memory 机制）：当前只使用 `AsyncPostgresSaver + MessagesState` 保存短期会话状态，并用 `trim_messages` 按消息条数保留最近上下文。后续需要单独设计 Memory 机制，明确短期记忆、长期记忆、滚动摘要、用户画像/偏好、记忆写入条件、召回方式、过期清理和用户隔离；实现时优先采用 LangGraph/LangChain 官方能力，不手写重复的记忆拼接逻辑。
+
 Prompt 的核心结构是：
 
 ```text
@@ -638,7 +640,6 @@ Prompt 的核心结构是：
 系统提示词要求：
 
 - 优先依据参考资料回答。
-- 参考资料不足时可以使用通用知识。
 - 无法确定时如实说明。
 - 不要编造。
 
@@ -898,131 +899,3 @@ RAG rerank 开始
 RAG rerank 完成
 对话完成
 ```
-
-### 12.2 有回答但没有引用
-
-重点检查：
-
-1. 是否出现“RAG 检索失败，降级为无参考资料”。
-2. `RAG 粗召回完成` 的最终 hit 是否为 0。
-3. 相似度阈值是否过高。
-4. Embedding 模型是否可访问。
-5. 知识库文件是否已经成功向量化。
-6. 前端是否收到 `event_type=sources`。
-
-### 12.3 上传文件后检索不到
-
-重点检查：
-
-- 文件是否成功解析，是否为空或扫描版 PDF。
-- 切分后是否存在有效 chunks。
-- Ollama 中是否已经安装 Embedding 模型。
-- Embedding 输出维度是否为 1024。
-- `langchain_pg_embedding` 是否有该文件的 metadata。
-- 问题表达是否与资料语义过远。
-- `RAG_SIMILARITY_THRESHOLD` 是否过高。
-
-扫描版 PDF 只有图片、没有可提取文字时，`PyPDFLoader` 可能得不到有效正文；当前项目没有 OCR 流程。
-
-### 12.4 rerank 阶段报错
-
-重点检查：
-
-- `RAG_RERANK_MODEL` 指向的模型是否存在。
-- 未单独配置时，默认聊天模型是否可调用。
-- 模型是否支持当前 LangChain rerank 所需的结构化输出。
-- 候选文档数量和内容是否过大。
-- 后端日志中的完整异常堆栈。
-
-临时定位问题时可以关闭 rerank：
-
-```text
-RAG_RERANK_ENABLED=false
-```
-
-这样可以判断故障是在向量召回阶段，还是在 LLM 精排阶段。
-
-### 12.5 引用刷新后消失
-
-新消息正常情况下会把引用保存到 `chat_message.sources` JSONB 字段。
-
-如果仍然丢失，检查：
-
-- Alembic 是否已经升级到 `0002_add_chat_message_sources`。
-- 历史接口是否返回 `sources`。
-- 前端历史消息映射是否执行 `sources: msg.sources || []`。
-- 该消息是否是在引用持久化功能上线之前产生的旧消息。
-
-## 十三、当前实现中需要特别注意的边界
-
-下面这些不是理解 RAG 概念所必需，但在继续开发时很重要。
-
-### 13.1 上传会先把整个文件读入内存
-
-当前 Router 调用 `await upload_item.read()` 后才校验大小。虽然限制为 100MB，但请求仍会先占用相应内存。
-
-后续处理更大文件时，可以考虑流式读取、在网关层限制请求体大小，或分块写临时文件。
-
-### 13.2 批量上传不是跨 PostgreSQL、PGVector、MinIO 的原子事务
-
-接口支持多个文件，但外部资源不参与数据库事务。如果前一个文件的向量和 MinIO 已成功，后一个文件失败导致数据库请求回滚，可能出现外部资源残留，需要进一步做批次级补偿。
-
-### 13.3 更新流程先改向量，再上传新 MinIO 对象
-
-当前更新流程先执行增量索引，再上传新对象。如果新对象上传失败，数据库事务会回滚业务记录，但向量库可能已经是新版本，需要后续增加旧向量恢复或更完整的补偿策略。
-
-### 13.4 删除外部资源采用尽力而为
-
-向量或 MinIO 删除失败时只记录日志，不阻断业务记录删除，可能产生孤儿资源。生产环境可以增加补偿任务或资源巡检表。
-
-### 13.5 rerank 会增加一次大模型调用
-
-LLM rerank 通常比纯向量检索更准确，但会增加：
-
-- 响应延迟。
-- 模型 token 消耗。
-- 模型服务不可用的故障点。
-
-是否启用应结合准确率、成本和延迟评测决定。
-
-### 13.6 向量表和 checkpoint 表由框架自动创建
-
-`langchain_pg_*`、`upsertion_record`、`checkpoint*` 表不是业务 ORM 手写表，而是 LangChain/LangGraph 在首次初始化或使用时创建。
-
-这减少了业务代码，但部署和迁移时仍应明确这些表的存在，不能只关注 Alembic 管理的业务表。
-
-## 十四、推荐的代码阅读顺序
-
-第一次阅读时不要从框架内部源码开始，按下面顺序更容易建立完整链路。
-
-### 14.1 上传与建库
-
-1. [backend/app/api/v1/knowledge.py](../backend/app/api/v1/knowledge.py)：HTTP 入口。
-2. [backend/app/services/knowledge_service.py](../backend/app/services/knowledge_service.py)：上传、更新、删除总编排。
-3. [backend/app/services/document_loader.py](../backend/app/services/document_loader.py)：文件解析。
-4. [backend/app/services/document_splitter.py](../backend/app/services/document_splitter.py)：QA/普通切分。
-5. [backend/app/services/model_provider.py](../backend/app/services/model_provider.py)：Embedding 和聊天模型构造。
-6. [backend/app/services/rag_store.py](../backend/app/services/rag_store.py)：PGVector 与增量索引。
-7. [backend/app/services/storage_service.py](../backend/app/services/storage_service.py)：MinIO 原文件存储。
-
-### 14.2 召回与回答
-
-1. [backend/app/api/v1/ai.py](../backend/app/api/v1/ai.py)：对话 HTTP/SSE 入口。
-2. [backend/app/services/ai_service.py](../backend/app/services/ai_service.py)：会话、图执行、SSE、消息落库编排。
-3. [backend/app/graph/chat_graph.py](../backend/app/graph/chat_graph.py)：LangGraph 三节点流程。
-4. [backend/app/services/rag_retrieval.py](../backend/app/services/rag_retrieval.py)：粗召回、阈值过滤、rerank 和引用构造。
-5. [backend/app/graph/checkpointer.py](../backend/app/graph/checkpointer.py)：多轮对话状态持久化。
-6. [frontend/src/api/chat.js](../frontend/src/api/chat.js)：前端读取 SSE。
-7. [frontend/src/components/ChatInput.vue](../frontend/src/components/ChatInput.vue)：处理 `sources` 和 `token` 事件。
-8. [frontend/src/stores/chat.js](../frontend/src/stores/chat.js)：消息状态和刷新恢复。
-9. [frontend/src/components/MessageItem.vue](../frontend/src/components/MessageItem.vue)：引用来源展示。
-
-## 十五、最后建立一个稳定的心智模型
-
-理解当前 LabAgent RAG，只需要牢牢记住下面五句话：
-
-1. **上传不是训练模型**，而是把资料解析、切分、向量化后写入可检索的知识库。
-2. **向量粗召回负责找候选，rerank 负责从候选里精排**，两者不是一回事。
-3. **LangChain 提供文档、向量、重排和 Prompt 能力，LangGraph 负责按节点编排并保存状态**。
-4. **原始文件在 MinIO，文本片段和向量在 PGVector，业务消息和引用在 chat_message，图记忆在 checkpoint 表**。
-5. **最终答案仍由聊天大模型生成，RAG 的作用是给它提供更可靠、更贴近课程资料的参考上下文**。

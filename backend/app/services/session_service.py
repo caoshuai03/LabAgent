@@ -60,6 +60,15 @@ class SessionService:
             for s in sessions
         ]
 
+    async def get_owned_session(self, session_id: str, user_id: int) -> ChatSession:
+        """获取当前用户所属的未删除会话。"""
+        chat_session = await self.repo.get_by_id(_parse_session_id(session_id))
+        if chat_session is None or chat_session.deleted == 1:
+            raise BusinessException(ErrorCode.NOT_FOUND_ERROR, "会话不存在")
+        if chat_session.user_id != user_id:
+            raise BusinessException(ErrorCode.NO_AUTH_ERROR, "无权访问该会话")
+        return chat_session
+
     async def touch(self, session_id: uuid.UUID) -> None:
         """刷新会话更新时间。"""
         await self.repo.touch(session_id)

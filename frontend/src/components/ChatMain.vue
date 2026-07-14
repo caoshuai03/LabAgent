@@ -46,7 +46,10 @@
       </div>
     </div>
 
-    <MessageList v-show="chatStore.messages.length > 0" />
+    <MessageList
+      v-show="chatStore.messages.length > 0"
+      @approval-decision="handleApprovalDecision"
+    />
 
     <div v-if="chatStore.messages.length === 0" class="welcome-container">
       <div class="welcome-content">
@@ -55,7 +58,7 @@
       </div>
     </div>
 
-    <ChatInput />
+    <ChatInput ref="chatInputRef" />
 
     <div class="footer-container">
       <p>以上内容均由AI生成, 仅供参考和借鉴。版权所有 © shuaicao01@163.com</p>
@@ -71,6 +74,7 @@ import ChatInput from './ChatInput.vue'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
 
 const chatStore = useChatStore()
+const chatInputRef = ref(null)
 const isMobile = ref(false)
 const showModelDropdown = ref(false)
 
@@ -122,6 +126,10 @@ const closeModelDropdown = () => {
 const selectModel = (value) => {
   chatStore.selectedModel = value
   closeModelDropdown()
+}
+
+const handleApprovalDecision = (approved) => {
+  chatInputRef.value?.handleApprovalDecision(approved)
 }
 
 const vClickOutside = {

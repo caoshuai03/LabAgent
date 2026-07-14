@@ -16,8 +16,8 @@ from app.services.model_provider import model_provider
 
 logger = logging.getLogger("labagent")
 
-# 命中相似度写入 doc.metadata 的键，供引用来源展示相似度分数
-_SIMILARITY_KEY = "_similarity"
+# 命中相关度写入 doc.metadata 的键，供引用来源展示相关度分数
+_RELEVANCE_SCORE_KEY = "_relevance_score"
 # 引用来源摘要最大长度
 _SNIPPET_MAX_LEN = 120
 
@@ -31,26 +31,26 @@ def build_sources(documents: list[Document]) -> list[dict]:
         sources.append({
             "file_name": doc.metadata.get("source"),
             "snippet": snippet,
-            "score": round(float(doc.metadata.get(_SIMILARITY_KEY, 0.0)), 4),
+            "score": round(float(doc.metadata.get(_RELEVANCE_SCORE_KEY, 0.0)), 4),
         })
     return sources
 
 
 async def retrieve(query: str) -> list[Document]:
-    """向量粗召回 + 相似度初筛，返回命中文档（相似度写入 metadata）。"""
-    pairs = await asyncio.to_thread(rag_store.search_with_score, query, settings.rag_top_k)
+    """向量粗召回 + 相关度初筛，返回命中文档（相关度分数写入 metadata）。"""
+    pairs = await asyncio.to_thread(
+        rag_store.search_with_relevance_scores, query, settings.rag_top_k
+    )
     logger.info(
         "RAG 向量召回: query=%r, top_k=%d, threshold=%.2f, 原始召回=%d",
         query, settings.rag_top_k, settings.rag_similarity_threshold, len(pairs),
     )
     documents: list[Document] = []
-    for doc, distance in pairs:
-        # PGVector 默认 COSINE 距离，转为相似度分数（1 - 距离），按阈值初筛
-        similarity = 1.0 - float(distance)
-        source = doc.metadata.get("source")
-        if similarity < settings.rag_similarity_threshold:
+    for doc, relevance_score in pairs:
+        score = float(relevance_score)
+        if score < settings.rag_similarity_threshold:
             continue
-        doc.metadata[_SIMILARITY_KEY] = similarity
+        doc.metadata[_RELEVANCE_SCORE_KEY] = score
         documents.append(doc)
     logger.info(
         "RAG 粗召回完成: query_len=%d, 原始召回=%d, 最终 hit=%d",

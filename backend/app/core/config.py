@@ -73,6 +73,27 @@ class Settings(BaseSettings):
     rag_rerank_top_n: int = 5
     rag_rerank_model: str = ""
 
+    # Agent 工具
+    agent_tools_enabled: bool = True
+    file_tools_enabled: bool = True
+    shell_tool_enabled: bool = False
+    shell_allowed_roles: str = "admin"
+    shell_delete_require_approval: bool = True
+    file_write_require_approval: bool = False
+    file_move_require_approval: bool = False
+    file_delete_require_approval: bool = True
+    tool_workspace_root: str = "./data/tool-workspaces"
+    tool_max_read_chars: int = 12000
+    tool_max_write_chars: int = 24000
+    tool_max_search_results: int = 50
+    tool_max_output_chars: int = 12000
+    tool_timeout_seconds: int = 60
+    shell_timeout_seconds: int = 20
+    agent_timeout_seconds: int = 180
+    agent_max_tool_rounds: int = 8
+    tool_runner_base_url: str = "http://tool-runner:8990"
+    tool_runner_token: str = ""
+
     @property
     def database_url(self) -> str:
         """异步数据库连接串。"""
@@ -113,6 +134,22 @@ class Settings(BaseSettings):
     def allowed_extension_set(self) -> set[str]:
         """允许上传的扩展名集合（小写，不含点）。"""
         return {ext.strip().lower() for ext in self.upload_allowed_extensions.split(",") if ext.strip()}
+
+    @property
+    def shell_allowed_role_set(self) -> set[int]:
+        """Shell 允许角色集合：user=0、admin=1，也支持直接配置数字。"""
+        role_map = {"user": 0, "admin": 1}
+        result: set[int] = set()
+        for value in self.shell_allowed_roles.split(","):
+            normalized = value.strip().lower()
+            if not normalized:
+                continue
+            if normalized in role_map:
+                result.add(role_map[normalized])
+                continue
+            if normalized.isdigit():
+                result.add(int(normalized))
+        return result
 
 
 @lru_cache

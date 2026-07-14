@@ -50,8 +50,37 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
       MINIO_BUCKET: ${MINIO_BUCKET:-labagent}
+      TOOL_WORKSPACE_ROOT: /data/tool-workspaces
+      TOOL_RUNNER_BASE_URL: http://tool-runner:8990
+      TOOL_RUNNER_TOKEN: ${TOOL_RUNNER_TOKEN:-}
+    volumes:
+      - tool_workspaces:/data/tool-workspaces
+    networks:
+      - default
+      - tool_internal
     ports:
       - "8989:8989"
+
+  tool-runner:
+    build: ./backend
+    command: ["/app/.venv/bin/uvicorn", "tool_runner.app:app", "--host", "0.0.0.0", "--port", "8990"]
+    environment:
+      TOOL_WORKSPACE_ROOT: /data/tool-workspaces
+      TOOL_RUNNER_TOKEN: ${TOOL_RUNNER_TOKEN:-}
+    volumes:
+      - tool_workspaces:/data/tool-workspaces
+    networks:
+      - tool_internal
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
 
   frontend:
     build: ./frontend
@@ -63,3 +92,8 @@ services:
 volumes:
   pg_data:
   minio_data:
+  tool_workspaces:
+
+networks:
+  tool_internal:
+    internal: true

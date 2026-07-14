@@ -2,63 +2,10 @@
   <div :class="['message-item', `message-${message.sender}`]">
     <div class="message-container">
       <div class="message-content">
-        <div v-if="message.sender === 'assistant' && toolCalls.length > 0" class="tool-calls-panel">
-          <div class="tool-calls-list">
-            <div v-for="(item, idx) in toolCalls" :key="`tool-${idx}`" class="tool-call-item">
-              <div v-if="idx !== toolCalls.length - 1" class="tool-call-line"></div>
-
-              <div class="tool-call-content" :class="{ 'tool-timeout': item.call.eventType === 'tool_timeout' || item.call.eventType === 'global_timeout' }">
-                <div class="tool-icon-wrapper">
-                  <span
-                    class="tool-icon"
-                    v-html="
-                      getToolIconSvg(
-                        item.type === 'skill'
-                          ? 'skill:' + item.call.payload.skillName
-                          : item.call.payload.toolName,
-                        item.call.eventType,
-                      )
-                    "
-                  ></span>
-                </div>
-                <div class="tool-text">
-                  <span class="tool-name">
-                    <template v-if="item.call.eventType === 'global_timeout'">
-                      ⚠️ 全局超时
-                    </template>
-                    <template v-else-if="item.call.eventType === 'tool_timeout'">
-                      ⚠️ 工具超时：{{ getToolDisplayName(item.call.payload.toolName) }}
-                    </template>
-                    <template v-else-if="item.type === 'skill'">
-                      调用 Skill：{{ item.call.payload.skillName }}
-                    </template>
-                    <template
-                      v-else-if="
-                        item.type === 'tool' &&
-                        item.call.payload.toolName &&
-                        item.call.payload.toolName.includes('mcp:')
-                      "
-                    >
-                      调用 MCP：{{ getToolDisplayName(item.call.payload.toolName) }}
-                    </template>
-                    <template v-else>
-                      调用 Tool：{{ getToolDisplayName(item.call.payload.toolName) }}
-                    </template>
-                  </span>
-                  <span v-if="getToolSummary(item)" class="tool-divider">|</span>
-                  <span
-                    v-if="getToolSummary(item)"
-                    class="tool-summary"
-                    :class="{ 'tool-summary-timeout': item.call.eventType === 'tool_timeout' || item.call.eventType === 'global_timeout' }"
-                    v-tooltip="getToolSummary(item)"
-                  >
-                    {{ truncateText(getToolSummary(item)) }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ToolActivityPanel
+          v-if="message.sender === 'assistant' && message.toolEvents?.length"
+          :tool-events="message.toolEvents"
+        />
 
         <div
           ref="messageTextRef"
@@ -66,6 +13,12 @@
           v-html="formatContent(message.content)"
           @click="handleCodeBlockClick"
         ></div>
+
+        <ToolApprovalInline
+          v-if="showInlineApproval"
+          :approval="chatStore.pendingApproval"
+          @decision="emit('approval-decision', $event)"
+        />
 
         <div v-if="message.sender === 'assistant' && sources.length > 0" class="sources-panel">
           <div class="sources-title">引用来源</div>
@@ -187,6 +140,10 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { renderMarkdown } from '../utils/markdown'
 import FeedbackModal from './FeedbackModal.vue'
+import ToolActivityPanel from './ToolActivityPanel.vue'
+import ToolApprovalInline from './ToolApprovalInline.vue'
+
+const emit = defineEmits(['approval-decision'])
 
 const props = defineProps({
   message: {
@@ -210,16 +167,16 @@ const sources = computed(() => {
   return Array.isArray(props.message.sources) ? props.message.sources : []
 })
 
+const showInlineApproval = computed(() => {
+  if (!chatStore.pendingApproval || props.message.sender !== 'assistant') return false
+  const messages = chatStore.messages || []
+  return messages.length > 0 && messages[messages.length - 1]?.id === props.message.id
+})
+
 const formatScore = (score) => {
   const value = Number(score)
   if (Number.isNaN(value)) return ''
   return value.toFixed(2)
-}
-
-const truncateText = (text, maxLen = 20) => {
-  if (!text) return ''
-  if (text.length <= maxLen) return text
-  return text.substring(0, maxLen) + '...'
 }
 
 const formatContent = (content) => {
@@ -230,152 +187,6 @@ const formatContent = (content) => {
   }
 
   return content.replace(/\n/g, '<br>').replace(/ {2}/g, '&nbsp;&nbsp;')
-}
-
-const toolCalls = computed(() => {
-  if (!props.message.toolEvents || !props.message.toolEvents.length) return []
-
-  const list = []
-  const activeCalls = new Map()
-
-  props.message.toolEvents.forEach((event) => {
-    if (event.eventType === 'skill_loaded') {
-      const skills = event.payload?.skills || []
-      skills.forEach((skill) => {
-        list.push({
-          type: 'skill',
-          call: {
-            eventType: 'skill_loaded',
-            payload: {
-              skillName: skill.name,
-              description: skill.description,
-              triggerKeywords: skill.triggerKeywords,
-            },
-            ts: event.ts,
-          },
-          result: { success: true },
-        })
-      })
-      return
-    }
-
-    if (event.eventType === 'tool_call') {
-      const round = event.payload?.round
-      const callItem = {
-        type: 'tool',
-        call: event,
-        result: null,
-        hidden: false,
-        round,
-      }
-      activeCalls.set(round, callItem)
-      list.push(callItem)
-      return
-    }
-
-    if (event.eventType === 'tool_result') {
-      const round = event.payload?.round
-      const callItem = activeCalls.get(round)
-      if (callItem) {
-        callItem.result = event
-        activeCalls.delete(round)
-      }
-      return
-    }
-
-    if (event.eventType === 'status' && event.payload?.stage === 'tool_done') {
-      const round = event.payload?.round
-      const callItem = activeCalls.get(round)
-      if (callItem && event.payload?.success === false) {
-        callItem.hidden = true
-        activeCalls.delete(round)
-      }
-    }
-
-    // 处理工具超时事件，展示为失败的工具调用
-    if (event.eventType === 'status' && event.payload?.stage === 'tool_timeout') {
-      const round = event.payload?.round
-      const toolName = event.payload?.toolName || 'unknown'
-      const timeoutSeconds = event.payload?.timeoutSeconds || 60
-      const callItem = {
-        type: 'tool',
-        call: {
-          eventType: 'tool_timeout',
-          payload: {
-            toolName,
-            description: `工具执行超时（${timeoutSeconds}秒）`,
-            timeoutSeconds,
-          },
-          ts: event.ts,
-        },
-        result: { success: false, error: 'timeout' },
-        hidden: false,
-        round,
-      }
-      // 如果该轮次已有工具调用，替换为超时状态
-      const existing = activeCalls.get(round)
-      if (existing) {
-        existing.call = callItem.call
-        existing.result = callItem.result
-      } else {
-        list.push(callItem)
-      }
-    }
-
-    // 处理全局超时事件，展示为特殊的系统提示
-    if (event.eventType === 'status' && event.payload?.stage === 'global_timeout') {
-      const timeoutSeconds = event.payload?.timeoutSeconds || 180
-      list.push({
-        type: 'system',
-        call: {
-          eventType: 'global_timeout',
-          payload: {
-            description: `全局执行超时（${timeoutSeconds}秒），Agent 基于已有信息作答`,
-            timeoutSeconds,
-          },
-          ts: event.ts,
-        },
-        result: { success: false, error: 'global_timeout' },
-        hidden: false,
-      })
-    }
-  })
-
-  return list.filter((item) => !item.hidden)
-})
-
-const getToolIconSvg = (toolName, eventType) => {
-  // 超时事件使用警告图标
-  if (eventType === 'tool_timeout' || eventType === 'global_timeout') {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`
-  }
-  if (toolName && toolName.startsWith('skill:')) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>`
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`
-}
-
-const getToolDisplayName = (toolName) => {
-  if (toolName && toolName.startsWith('skill:')) {
-    return toolName.substring(6)
-  }
-
-  return toolName || 'tool'
-}
-
-const getToolSummary = (item) => {
-  try {
-    if (item.type === 'skill') {
-      return item.call.payload.description || ''
-    }
-    if (item.call.payload.description) {
-      return item.call.payload.description
-    }
-
-    return ''
-  } catch {
-    return ''
-  }
 }
 
 const openFeedbackModal = () => {
@@ -829,116 +640,6 @@ watch(
     border: none;
     border-top: 1px solid var(--border-color);
   }
-}
-
-.tool-calls-panel {
-  margin: 0 0 16px 16px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 12px;
-  background: transparent;
-  overflow: hidden;
-  max-width: 600px;
-
-  @media (max-width: 768px) {
-    margin: 0 0 12px 0;
-    max-width: 100%;
-  }
-}
-
-.tool-calls-list {
-  padding: 12px 16px 12px 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.tool-call-item {
-  position: relative;
-}
-
-.tool-call-line {
-  position: absolute;
-  left: 11.5px;
-  top: 24px;
-  bottom: -20px;
-  width: 1px;
-  border-left: 1px dashed var(--border-color, #d1d5db);
-  z-index: 1;
-}
-
-.tool-call-content {
-  display: flex;
-  align-items: center;
-  position: relative;
-  z-index: 2;
-  cursor: default;
-}
-
-.tool-icon-wrapper {
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-right: 8px;
-}
-
-.tool-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary, #6b7280);
-}
-
-.tool-text {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.tool-name {
-  font-size: 14px;
-  color: var(--text-primary, #374151);
-  font-weight: 500;
-  flex-shrink: 0;
-  line-height: 1.4;
-}
-
-.tool-divider {
-  color: var(--border-color, #d1d5db);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.tool-summary {
-  font-size: 13px;
-  color: var(--text-secondary, #6b7280);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: default;
-  transition: color 0.2s;
-
-  &:hover {
-    color: #90138b;
-  }
-}
-
-// 超时事件样式
-.tool-timeout {
-  .tool-icon {
-    color: #f59e0b;
-  }
-}
-
-.tool-summary-timeout {
-  color: #f59e0b !important;
-  font-weight: 500;
 }
 
 .message-footer {

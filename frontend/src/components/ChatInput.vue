@@ -4,8 +4,14 @@
       <textarea
         ref="inputRef"
         v-model="inputText"
-        :disabled="chatStore.isStreaming"
-        :placeholder="chatStore.isStreaming ? 'AI 正在回复...' : '输入消息...'"
+        :disabled="chatStore.isStreaming || chatStore.awaitingApproval"
+        :placeholder="
+          chatStore.awaitingApproval
+            ? '请先处理工具确认'
+            : chatStore.isStreaming
+              ? 'AI 正在回复...'
+              : '输入消息...'
+        "
         :class="['chat-input', { 'has-scrollbar': showScrollbar }]"
         rows="1"
         @keydown="handleKeyDown"
@@ -78,17 +84,16 @@
         </div>
       </div>
     </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
-import { useUserStore } from '../stores/user'
-import { sendReactAgentMessage } from '../api/chat'
+import { resumeReactAgent, sendReactAgentMessage } from '../api/chat'
 
 const chatStore = useChatStore()
-const userStore = useUserStore()
 
 const inputText = ref('')
 const inputRef = ref(null)
@@ -104,7 +109,11 @@ const COLLAPSE_TRIGGER_HEIGHT = 56
 let inputVisualSyncFrameId = 0
 
 const canSend = computed(() => {
-  return inputText.value.trim().length > 0 && !chatStore.isStreaming
+  return (
+    inputText.value.trim().length > 0 &&
+    !chatStore.isStreaming &&
+    !chatStore.awaitingApproval
+  )
 })
 
 // 每个会话独立维护自己的流任务，避免切换历史会话时互相覆盖
@@ -163,6 +172,7 @@ const finalizeStreamTask = async (conversationKey, { abort = false, refreshConve
   }
 
   chatStore.markLastAssistantMessageComplete(conversationKey)
+  chatStore.clearPendingApproval(conversationKey)
   chatStore.setConversationStreaming(conversationKey, false)
   chatStore.setConversationLoading(conversationKey, false)
   streamTasks.delete(conversationKey)
@@ -171,6 +181,54 @@ const finalizeStreamTask = async (conversationKey, { abort = false, refreshConve
     await chatStore.loadConversationsFromDB()
   }
 }
+
+const createStreamCallbacks = (streamTask) => ({
+  onMessage: (data) => {
+    const lastMessage = chatStore.getLastMessage(streamTask.conversationKey)
+    if (!lastMessage) return
+
+    if (typeof data === 'object' && data.event_type) {
+      handleStreamEvent(data, streamTask, lastMessage)
+      return
+    }
+
+    if (typeof data !== 'string') return
+
+    if (data.startsWith('[ERROR]')) {
+      lastMessage.content = '错误: ' + data.substring(7)
+      chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
+      void finalizeStreamTask(streamTask.conversationKey, { abort: true })
+      return
+    }
+
+    if (!streamTask.sessionIdReceived && data.startsWith('[SESSION_ID:')) {
+      const match = data.match(/\[SESSION_ID:(.+?)\]/)
+      if (match) bindSessionToStreamTask(match[1], streamTask)
+      return
+    }
+
+    lastMessage.content += data
+    chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
+  },
+  onError: (error) => {
+    console.error('请求错误:', error)
+    const lastMessage = chatStore.getLastMessage(streamTask.conversationKey)
+    if (lastMessage && !lastMessage.content.trim()) {
+      lastMessage.content = '连接错误，请重试'
+      chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
+    }
+    void finalizeStreamTask(streamTask.conversationKey)
+  },
+  onComplete: () => {
+    if (streamTask.paused) {
+      streamTask.abortController = null
+      chatStore.setConversationStreaming(streamTask.conversationKey, false)
+      chatStore.setConversationLoading(streamTask.conversationKey, false)
+      return
+    }
+    void finalizeStreamTask(streamTask.conversationKey, { refreshConversations: true })
+  },
+})
 
 // 长文本输入时切换到更高的编辑态，并通过滞后阈值避免临界高度反复抖动
 const updateExpandedState = (contentHeight) => {
@@ -270,6 +328,7 @@ const handleSend = async () => {
     currentUserMessage: message,
     sessionIdReceived: false,
     abortController: null,
+    paused: false,
   }
 
   chatStore.addMessage('user', message, conversationKey)
@@ -282,56 +341,11 @@ const handleSend = async () => {
   chatStore.setConversationLoading(conversationKey, true)
 
   const sessionId = chatStore.isDraftConversationKey(conversationKey) ? '' : conversationKey
-  const userId = userStore.userInfo?.id || 1
   const model = chatStore.selectedModel
 
   streamTask.abortController = sendReactAgentMessage(
-    { message, sessionId, userId, model },
-    {
-      onMessage: (data) => {
-        const lastMessage = chatStore.getLastMessage(streamTask.conversationKey)
-        if (!lastMessage) return
-
-        if (typeof data === 'object' && data.event_type) {
-          handleStreamEvent(data, streamTask, lastMessage)
-          return
-        }
-
-        if (typeof data !== 'string') {
-          return
-        }
-
-        if (data.startsWith('[ERROR]')) {
-          lastMessage.content = '错误: ' + data.substring(7)
-          chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
-          void finalizeStreamTask(streamTask.conversationKey, { abort: true })
-          return
-        }
-
-        if (!streamTask.sessionIdReceived && data.startsWith('[SESSION_ID:')) {
-          const match = data.match(/\[SESSION_ID:(.+?)\]/)
-          if (match) {
-            bindSessionToStreamTask(match[1], streamTask)
-          }
-          return
-        }
-
-        lastMessage.content += data
-        chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
-      },
-      onError: (error) => {
-        console.error('请求错误:', error)
-        const lastMessage = chatStore.getLastMessage(streamTask.conversationKey)
-        if (lastMessage && !lastMessage.content.trim()) {
-          lastMessage.content = '连接错误，请重试'
-          chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
-        }
-        void finalizeStreamTask(streamTask.conversationKey)
-      },
-      onComplete: () => {
-        void finalizeStreamTask(streamTask.conversationKey, { refreshConversations: true })
-      },
-    },
+    { message, sessionId, model },
+    createStreamCallbacks(streamTask),
   )
 
   streamTasks.set(conversationKey, streamTask)
@@ -372,6 +386,31 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     return
   }
 
+  if (event.event_type === 'tool_approval_required') {
+    streamTask.paused = true
+    ;(payload.tool_calls || []).forEach((toolCall) => {
+      chatStore.addToolEventToLastMessage(
+        {
+          eventType: 'status',
+          payload: {
+            stage: 'pending_approval',
+            tool_call_id: toolCall.tool_call_id,
+            tool_name: toolCall.tool_name,
+          },
+          ts: event.ts,
+        },
+        streamTask.conversationKey,
+      )
+    })
+    chatStore.setPendingApproval(payload, streamTask.conversationKey)
+    return
+  }
+
+  if (event.event_type === 'paused') {
+    streamTask.paused = true
+    return
+  }
+
   if (event.event_type === 'error') {
     const message = payload.message || '请求失败'
     if (!lastMessage.content) {
@@ -382,9 +421,33 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
   }
 
   if (event.event_type === 'final') {
+    streamTask.paused = false
+    chatStore.clearPendingApproval(streamTask.conversationKey)
     void finalizeStreamTask(streamTask.conversationKey, { refreshConversations: true })
   }
 }
+
+const handleApprovalDecision = (approved) => {
+  const conversationKey = chatStore.activeConversationKey
+  const streamTask = getStreamTask(conversationKey)
+  const approval = chatStore.pendingApproval
+  if (!streamTask || !approval?.interrupt_id || !conversationKey) return
+
+  streamTask.paused = false
+  chatStore.clearPendingApproval(conversationKey)
+  chatStore.setConversationStreaming(conversationKey, true)
+  chatStore.setConversationLoading(conversationKey, true)
+  streamTask.abortController = resumeReactAgent(
+    {
+      sessionId: conversationKey,
+      interruptId: approval.interrupt_id,
+      approved,
+    },
+    createStreamCallbacks(streamTask),
+  )
+}
+
+defineExpose({ handleApprovalDecision })
 
 const handleStop = async (conversationKey = chatStore.activeConversationKey) => {
   const streamTask = getStreamTask(conversationKey)

@@ -11,7 +11,9 @@ from app.core.errors import BusinessException, ErrorCode
 from app.models.chat_message import ChatMessage
 from app.repositories.chat_message_repository import ChatMessageRepository
 from app.repositories.chat_session_repository import ChatSessionRepository
+from app.repositories.tool_call_repository import ToolCallRepository
 from app.schemas.chat import ChatMessageVO
+from app.schemas.tool import ChatToolCallVO
 
 
 class MessageService:
@@ -52,6 +54,13 @@ class MessageService:
         if chat_session.user_id != user_id:
             raise BusinessException(ErrorCode.NO_AUTH_ERROR, "无权访问该会话")
         messages = await self.repo.list_by_session(sid)
+        tool_call_records = await ToolCallRepository(self.session).list_by_session(sid)
+        calls_by_message: dict[int, list[ChatToolCallVO]] = {}
+        for record in tool_call_records:
+            if record.message_id is not None:
+                calls_by_message.setdefault(record.message_id, []).append(
+                    ChatToolCallVO.model_validate(record, from_attributes=True)
+                )
         return [
             ChatMessageVO(
                 id=m.id,
@@ -59,6 +68,7 @@ class MessageService:
                 role=m.role,
                 content=m.content,
                 sources=m.sources or [],
+                tool_calls=calls_by_message.get(m.id, []),
                 created_at=m.created_at,
             )
             for m in messages
