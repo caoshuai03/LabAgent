@@ -7,12 +7,14 @@
       <component :is="Component" />
     </keep-alive>
   </router-view>
+  <ToastContainer />
 </template>
 
 <script setup>
 // 导入 highlight.js 的 CSS
 // 使用 github 主题（浅色）
 import 'highlight.js/styles/github.css'
+import ToastContainer from './components/ToastContainer.vue'
 </script>
 
 <style>

@@ -111,6 +111,8 @@ const closeFeedbackModal = () => {
 
 const handleLogout = () => {
   userStore.logout()
+  // 清空会话状态，避免切换用户后残留上一个用户的会话列表
+  chatStore.reset()
   router.push('/login')
 }
 

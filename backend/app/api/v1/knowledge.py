@@ -1,11 +1,11 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-12
-@description: 知识库模块路由——文件上传/查询/删除/下载（上传/删除需管理员），解析向量化留第三阶段
+@description: 知识库模块路由——文件上传/更新/查询/删除/下载（上传/更新/删除需管理员）
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Query, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import AdminUser, CurrentUser, DbSession
@@ -17,15 +17,32 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
 @router.post("/file/upload")
-async def upload(files: list[UploadFile], admin: AdminUser, db: DbSession) -> BaseResponse[list[KbFileVO]]:
-    """上传文件到 MinIO 并记录（管理员）。"""
+async def upload(
+    admin: AdminUser,
+    db: DbSession,
+    file: Annotated[list[UploadFile], File()],
+) -> BaseResponse[list[KbFileVO]]:
+    """上传文件到 MinIO 并记录（管理员）。表单字段名为 file，可携带多个。"""
     service = KnowledgeService(db)
     results: list[KbFileVO] = []
-    for file in files:
-        data = await file.read()
-        vo = await service.upload_file(file.filename or "", data)
+    for upload_item in file:
+        data = await upload_item.read()
+        vo = await service.upload_file(upload_item.filename or "", data)
         results.append(vo)
     return success(results)
+
+
+@router.post("/file/update")
+async def update(
+    admin: AdminUser,
+    db: DbSession,
+    kb_file_id: Annotated[int, Form()],
+    file: UploadFile,
+) -> BaseResponse[KbFileVO]:
+    """按 kb_file_id 定位已有文档做增量更新（管理员）：解析切分新文件、增量索引、替换 MinIO 对象。"""
+    data = await file.read()
+    vo = await KnowledgeService(db).update_file(kb_file_id, file.filename or "", data)
+    return success(vo)
 
 
 @router.get("/contents")

@@ -77,6 +77,7 @@ const showModelDropdown = ref(false)
 // 可用模型列表
 const availableModels = ref([
   { label: 'Qwen3-8B', value: 'qwen3:8b' },
+  { label: 'GPT-5.5', value: 'gpt-5.5-2026-04-24' },
   { label: 'Ernie 4.5-300B', value: 'ernie-4.5-turbo-128k-preview' },
   { label: 'DeepSeek V3', value: 'deepseek-v3' },
   { label: 'DeepSeek R1', value: 'deepseek-r1' },

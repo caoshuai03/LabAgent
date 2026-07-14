@@ -67,6 +67,24 @@
           @click="handleCodeBlockClick"
         ></div>
 
+        <div v-if="message.sender === 'assistant' && sources.length > 0" class="sources-panel">
+          <div class="sources-title">引用来源</div>
+          <div class="sources-list">
+            <div v-for="(source, idx) in sources" :key="`source-${idx}`" class="source-item">
+              <div class="source-header">
+                <span class="source-index">{{ idx + 1 }}</span>
+                <span class="source-name" v-tooltip="source.file_name || '未知来源'">
+                  {{ source.file_name || '未知来源' }}
+                </span>
+                <span v-if="source.score !== undefined && source.score !== null" class="source-score">
+                  {{ formatScore(source.score) }}
+                </span>
+              </div>
+              <div v-if="source.snippet" class="source-snippet">{{ source.snippet }}</div>
+            </div>
+          </div>
+        </div>
+
         <div class="message-footer">
           <div v-if="showMessageActions" class="message-actions">
             <button
@@ -187,6 +205,16 @@ const showMessageActions = computed(() => {
 })
 
 const feedbackState = computed(() => props.message.feedbackState || null)
+
+const sources = computed(() => {
+  return Array.isArray(props.message.sources) ? props.message.sources : []
+})
+
+const formatScore = (score) => {
+  const value = Number(score)
+  if (Number.isNaN(value)) return ''
+  return value.toFixed(2)
+}
 
 const truncateText = (text, maxLen = 20) => {
   if (!text) return ''
@@ -924,6 +952,85 @@ watch(
   @media (max-width: 768px) {
     padding-left: 12px;
   }
+}
+
+.sources-panel {
+  margin: 12px 0 0 16px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 12px;
+  padding: 12px 16px;
+  max-width: 600px;
+
+  @media (max-width: 768px) {
+    margin: 12px 0 0 0;
+    max-width: 100%;
+  }
+}
+
+.sources-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #6b7280);
+  margin-bottom: 10px;
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.source-index {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(144, 19, 139, 0.08);
+  color: #90138b;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.source-name {
+  font-size: 13px;
+  color: var(--text-primary, #374151);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-score {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.source-snippet {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  line-height: 1.5;
+  padding-left: 26px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .message-actions {

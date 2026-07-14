@@ -19,13 +19,15 @@ export const useChatStore = defineStore('chat', () => {
   // 侧边栏折叠状态
   const sidebarCollapsed = ref(false)
 
+  // 切换用户后需要重新加载会话列表：logout 时置 true，Chat 视图 onActivated 时据此重载，
+  // 避免 keep-alive 缓存导致上一个用户的会话残留
+  const needsReload = ref(false)
+
   // 是否需要聚焦输入框
   const shouldFocusInput = ref(false)
 
   // 当前选中的大模型
   const selectedModel = ref('qwen3:8b')
-
-  const chatMode = ref('ask')
 
   const createConversationState = () => ({
     messages: [],
@@ -333,6 +335,7 @@ export const useChatStore = defineStore('chat', () => {
       content: content,
       timestamp: new Date().toISOString(),
       toolEvents: [],
+      sources: [],
       isComplete: sender !== 'assistant',
       feedbackState: null,
     }
@@ -411,6 +414,18 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 设置指定会话最后一条助手消息的引用来源（RAG 检索命中的来源）
+   * @param {Array} sources - 来源列表，每项含 file_name/snippet/score（全蛇形）
+   * @param {string} [conversationKey] - 会话 key
+   */
+  const setLastMessageSources = (sources, conversationKey = activeConversationKey.value) => {
+    const lastMessage = getLastMessage(conversationKey)
+    if (lastMessage && lastMessage.sender === 'assistant') {
+      lastMessage.sources = Array.isArray(sources) ? sources : []
+    }
+  }
+
+  /**
    * 从数据库加载会话的历史消息
    * @param {string} sessionId - 会话ID
    * @param {boolean} [force=false] - 是否强制刷新
@@ -467,6 +482,7 @@ export const useChatStore = defineStore('chat', () => {
           content: content,
           timestamp: msg.created_at || new Date().toISOString(),
           toolEvents: toolEvents,
+          sources: Array.isArray(msg.sources) ? msg.sources : [],
           isComplete: true,
           feedbackState: null,
         }
@@ -532,6 +548,7 @@ export const useChatStore = defineStore('chat', () => {
    * 初始化：从数据库加载会话列表
    */
   const initialize = async () => {
+    needsReload.value = false
     await loadConversationsFromDB()
 
     // 如果当前已经是新对话状态（比如从其他页面点击“新对话”跳转过来时），则不自动加载历史会话
@@ -552,6 +569,18 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 重置会话状态：切换用户（登出）时调用，清空当前用户的会话数据与本地当前会话记录，
+   * 并标记 needsReload，让 Chat 视图重新激活时按新用户重新加载
+   */
+  const reset = () => {
+    conversations.value = []
+    conversationStates.value = {}
+    activeConversationKey.value = null
+    localStorage.removeItem(CURRENT_CONVERSATION_STORAGE_KEY)
+    needsReload.value = true
+  }
+
   return {
     conversations,
     currentConversationId,
@@ -560,10 +589,10 @@ export const useChatStore = defineStore('chat', () => {
     isLoading,
     isStreaming,
     sidebarCollapsed,
+    needsReload,
     shouldFocusInput,
     isNewConversation,
     selectedModel,
-    chatMode,
     currentConversation,
     createConversation,
     setCurrentSessionId,
@@ -582,10 +611,12 @@ export const useChatStore = defineStore('chat', () => {
     markLastAssistantMessageComplete,
     setMessageFeedbackState,
     addToolEventToLastMessage,
+    setLastMessageSources,
     clearMessages,
     toggleSidebar,
     focusInput,
     initialize,
+    reset,
     loadConversationsFromDB,
     loadConversationMessagesFromDB,
     isDraftConversationKey,

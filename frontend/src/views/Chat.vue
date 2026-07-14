@@ -6,7 +6,7 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onActivated } from 'vue'
 import { useChatStore } from '../stores/chat'
 import Sidebar from '../components/Sidebar.vue'
 import ChatMain from '../components/ChatMain.vue'
@@ -29,6 +29,16 @@ onMounted(async () => {
 
   // 从数据库加载会话（异步操作）
   await chatStore.initialize()
+})
+
+/**
+ * keep-alive 缓存下，切换用户后组件被复用而非重建，onMounted 不会再触发。
+ * 通过 onActivated + needsReload 标记，在重新激活时按新用户重新加载会话列表。
+ */
+onActivated(async () => {
+  if (chatStore.needsReload) {
+    await chatStore.initialize()
+  }
 })
 </script>
 

@@ -41,9 +41,19 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "qwen3:8b"
     ollama_embedding_model: str = "turingdance/gte-large-zh:latest"
+    # 嵌入模型请求超时（秒）：Ollama 不可达时快速失败以触发检索降级，避免拖死整个对话
+    ollama_embedding_timeout: int = 2
     openai_api_key: str = ""
     openai_base_url: str = "https://aistudio.baidu.com/llm/lmapi/v3"
     openai_chat_model: str = "ernie-4.5-turbo-128k-preview"
+
+    # Azure OpenAI 网关（字节 aidp modelhub）
+    azure_api_key: str = ""
+    azure_api_version: str = "2024-03-01-preview"
+    azure_endpoint: str = "https://aidp.bytedance.net/api/modelhub/online/v2/crawl"
+    azure_chat_model: str = "gpt-5.5-2026-04-24"
+    # 链路追踪 logid（X-TT-LOGID）；留空则每次构造时自动生成
+    azure_logid: str = ""
 
     # 对话记忆窗口（用于 trim_messages 的最大消息条数）
     memory_max_messages: int = 20
@@ -51,6 +61,17 @@ class Settings(BaseSettings):
     # 文件上传校验
     upload_max_size_mb: int = 100
     upload_allowed_extensions: str = "pdf,md,markdown,txt"
+
+    # RAG 检索增强
+    rag_collection_name: str = "lab_agent_rag"
+    rag_embedding_dim: int = 1024
+    rag_chunk_size: int = 512
+    rag_chunk_overlap: int = 100
+    rag_top_k: int = 20
+    rag_similarity_threshold: float = 0.5
+    rag_rerank_enabled: bool = True
+    rag_rerank_top_n: int = 5
+    rag_rerank_model: str = ""
 
     @property
     def database_url(self) -> str:
@@ -71,6 +92,18 @@ class Settings(BaseSettings):
     @property
     def alembic_database_url(self) -> str:
         """Alembic 迁移使用的同步连接串（显式指定 psycopg v3 驱动）。"""
+        return (
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def vector_database_url(self) -> str:
+        """PGVector/SQLRecordManager 使用的同步连接串。
+
+        走 SQLAlchemy create_engine，须显式指定 psycopg v3 方言，
+        否则会回退到未安装的 psycopg2 默认驱动。
+        """
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

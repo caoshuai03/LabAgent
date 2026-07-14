@@ -48,7 +48,7 @@ export const deleteSessions = (sessionIds, userId = 1) => {
 }
 
 /**
- * 发送RAG对话消息（POST方式，支持SSE流式响应）
+ * 发送 Agent 对话消息（POST 方式，支持 SSE 流式响应）
  *
  * 使用 fetch + ReadableStream 处理 SSE 流式响应，
  * 相比 EventSource（仅支持GET），POST方式更安全且支持更长的消息内容。
@@ -64,10 +64,6 @@ export const deleteSessions = (sessionIds, userId = 1) => {
  * @param {Function} callbacks.onComplete - 完成时的回调 () => void
  * @returns {AbortController} 用于取消请求的控制器
  */
-export const sendChatMessage = (params, callbacks) => {
-  return sendSseMessage('/api/v1/ai/rag', params, callbacks)
-}
-
 export const sendReactAgentMessage = (params, callbacks) => {
   return sendSseMessage('/api/v1/ai/react-agent', params, callbacks)
 }

@@ -30,15 +30,9 @@ def _stream_response(message: str, session_id: str | None, user_id: int, model: 
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
-@router.post("/rag")
-async def rag_chat(req: ChatRequest, current_user: CurrentUser) -> StreamingResponse:
-    """RAG 对话接口（本阶段模型直连，检索增强留第三阶段）。"""
-    return _stream_response(req.message or "你好", req.session_id, current_user.id, req.model)
-
-
 @router.post("/react-agent")
 async def agent_chat(req: ChatRequest, current_user: CurrentUser) -> StreamingResponse:
-    """Agent 对话接口（本阶段与 rag 同为模型直连，编排留第四阶段）。"""
+    """Agent 对话接口（唯一对话入口：检索→重排→生成，引用来源随 SSE 回传）。"""
     return _stream_response(req.message or "你好", req.session_id, current_user.id, req.model)
 
 

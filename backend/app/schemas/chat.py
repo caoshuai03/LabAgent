@@ -7,6 +7,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.knowledge import KbSourceVO
+
 
 class ChatRequest(BaseModel):
     """RAG/Agent 对话请求。userId 一律忽略，以 JWT 为准。"""
@@ -36,6 +38,7 @@ class ChatMessageVO(BaseModel):
     session_id: str
     role: str
     content: str | None
+    sources: list[KbSourceVO] = Field(default_factory=list)
     created_at: datetime
 
 

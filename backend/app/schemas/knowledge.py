@@ -16,3 +16,11 @@ class KbFileVO(BaseModel):
     url: str | None
     create_time: datetime | None
     update_time: datetime | None
+
+
+class KbSourceVO(BaseModel):
+    """RAG 引用来源返回体——供对话结果展示引用出处，全字段蛇形。"""
+
+    file_name: str | None
+    snippet: str
+    score: float

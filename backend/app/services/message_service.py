@@ -22,9 +22,22 @@ class MessageService:
         self.repo = ChatMessageRepository(session)
         self.session_repo = ChatSessionRepository(session)
 
-    async def save_message(self, session_id: uuid.UUID, user_id: int, role: str, content: str) -> ChatMessage:
+    async def save_message(
+        self,
+        session_id: uuid.UUID,
+        user_id: int,
+        role: str,
+        content: str,
+        sources: list[dict[str, str | float | None]] | None = None,
+    ) -> ChatMessage:
         """持久化一条消息。"""
-        message = ChatMessage(session_id=session_id, user_id=user_id, role=role, content=content)
+        message = ChatMessage(
+            session_id=session_id,
+            user_id=user_id,
+            role=role,
+            content=content,
+            sources=sources,
+        )
         return await self.repo.add(message)
 
     async def get_messages_by_session(self, session_id: str, user_id: int) -> list[ChatMessageVO]:
@@ -45,6 +58,7 @@ class MessageService:
                 session_id=str(m.session_id),
                 role=m.role,
                 content=m.content,
+                sources=m.sources or [],
                 created_at=m.created_at,
             )
             for m in messages

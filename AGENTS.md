@@ -17,7 +17,7 @@
 要从javalabagent迁移过来
 第一阶段已完成 done，产出文档：[第一阶段：产品与架构设计](./docs/01-产品与架构设计.md)
 第二阶段设计已完成 done，产出文档：[第二阶段：基础后端设计](./docs/02-基础后端设计.md)
-当前进入第二阶段开发 todo
+当前进入第三阶段开发 todo
 做一些具体的设计之前，可以跟我先讨论具体的实现，可以先给出你的建议；
 重点要了解清楚LangGraph如何进行agent构建，对应文档[文档](https://docs.langchain.com/oss/python/langgraph/overview)
 
@@ -67,6 +67,7 @@
 
 ## 框架能力优先（重要）
 
+- 迁移是升级优化，不是原样照搬：从 javalabagent 迁移到 Python/LangGraph 技术栈时，目标是做出更好的版本，而非把参考项目的所有功能与实现方式全量搬过来。参考项目的过时做法、被语言/框架限制的妥协、可用框架能力替代的手写逻辑，都应在迁移时纠正或升级；能用更优方案（如框架能力、结构化返回、可配置化）就不要照搬旧实现。举例：RAG 用结构化「引用来源」替代 `【根据知识库】/【根据通用知识】` 回答前缀；切分参数、向量维度等改为可配置；上下文拼装、切片增量索引、rerank 用框架能力实现。
 - 参考项目javalabagent的一个突出问题是：把本应由框架提供的能力都自己手写了（如手写滑动窗口记忆、手写滚动摘要、手写会话状态拼接、手写工具调用循环）。迁移到LangGraph后必须纠正这一点。
 - 编排框架统一采用LangGraph。凡是LangGraph（含其底层依赖langchain-core，以及langchain-ollama/langchain-openai等模型集成包）已提供的能力，一律优先使用框架能力，禁止重复造轮子；只有框架未覆盖或需贴合教学业务的部分才自己实现。
 - 明确应改用框架能力的场景：短期记忆与对话上下文用LangGraph checkpointer（AsyncPostgresSaver）+ MessagesState；上下文裁剪用trim_messages、消息删除用RemoveMessage、摘要按官方summarize模式；流式输出用图的astream；Agent与工具调用循环用create_react_agent或StateGraph+ToolNode；工具定义与参数校验用@tool+Pydantic；模型调用用langchain-ollama/langchain-openai的统一Runnable接口；提示词用ChatPromptTemplate。

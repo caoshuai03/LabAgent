@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -23,6 +23,9 @@ class ChatMessage(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="用户ID")
     role: Mapped[str] = mapped_column(String(20), nullable=False, comment="角色 user/assistant/system")
     content: Mapped[str | None] = mapped_column(Text, nullable=True, comment="消息内容")
+    sources: Mapped[list[dict[str, str | float | None]] | None] = mapped_column(
+        JSONB, nullable=True, comment="RAG引用来源"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), comment="创建时间"
     )

@@ -30,8 +30,16 @@
               ref="fileInput"
               type="file"
               multiple
-              accept=".pdf,.doc,.docx,.txt,.md"
+              accept=".pdf,.txt,.md,.markdown"
               @change="handleFileSelect"
+              style="display: none"
+            />
+            <!-- 更新文件选择：按记录 id 定位替换，单文件 -->
+            <input
+              ref="updateFileInput"
+              type="file"
+              accept=".pdf,.txt,.md,.markdown"
+              @change="handleUpdateFileSelect"
               style="display: none"
             />
             <!-- 搜索框 -->
@@ -108,6 +116,16 @@
               <div class="file-info">
                 <h3 class="file-name" v-tooltip="file.file_name">{{ file.file_name }}</h3>
                 <p class="file-time">{{ formatDate(file.create_time) }}</p>
+              </div>
+              <div v-if="isAdmin" class="file-actions" @click.stop>
+                <button
+                  @click="handleUpdateClick(file.id)"
+                  class="icon-btn"
+                  :disabled="uploading"
+                  v-tooltip="'更新文件'"
+                >
+                  <UploadIcon :size="16" />
+                </button>
               </div>
             </div>
           </div>
@@ -239,10 +257,17 @@ import UploadIcon from '../components/icons/UploadIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import TrashIcon from '../components/icons/TrashIcon.vue'
 import SearchIcon from '../components/icons/SearchIcon.vue'
+import { useToast } from '../composables/useToast'
 
 // 初始化 chatStore 和 userStore
 const chatStore = useChatStore()
 const userStore = useUserStore()
+
+// 全局 toast：统一成功/失败反馈
+const toast = useToast()
+const showMessage = (message, type = 'success') => {
+  toast.showToast(message, type)
+}
 
 // 计算属性：是否为管理员
 const isAdmin = computed(() => userStore.isAdmin())
@@ -260,6 +285,9 @@ const uploading = ref(false)
 const deleting = ref(false)
 const downloading = ref(false)
 const fileInput = ref(null)
+const updateFileInput = ref(null)
+// 当前待更新的记录 id，供 handleUpdateFileSelect 使用
+const updatingId = ref(null)
 
 const isAllSelected = computed(() => {
   return fileList.value.length > 0 && selectedIds.value.length === fileList.value.length
@@ -295,11 +323,11 @@ const fetchFileList = async () => {
       fileList.value = Array.isArray(data) ? data : data.records || data.list || []
     } else {
       console.error('获取文件列表失败:', response.data.message)
-      alert('获取文件列表失败: ' + (response.data.message || '未知错误'))
+      showMessage('获取文件列表失败: ' + (response.data.message || '未知错误'), 'error')
     }
   } catch (error) {
     console.error('获取文件列表错误:', error)
-    alert('获取文件列表失败: ' + (error.message || '网络错误'))
+    showMessage('获取文件列表失败: ' + (error.message || '网络错误'), 'error')
   } finally {
     loading.value = false
   }
@@ -353,7 +381,7 @@ const handleFileSelect = async (event) => {
         fileInput.value.value = ''
       }
     } else {
-      showMessage('文件上传失败: ' + (response.data.message || '未知错误'))
+      showMessage('文件上传失败: ' + (response.data.message || '未知错误'), 'error')
       // 业务失败也清空文件选择，避免用户误以为已上传成功
       if (fileInput.value) {
         fileInput.value.value = ''
@@ -363,16 +391,17 @@ const handleFileSelect = async (event) => {
     console.error('上传文件错误:', error)
     // axios 超时一般会是 ECONNABORTED
     if (error?.code === 'ECONNABORTED') {
-      showMessage('文件上传超时，请稍后重试')
+      showMessage('文件上传超时，请稍后重试', 'error')
     } else if (error?.response?.status === 413) {
-      showMessage('文件过大，上传失败（413）')
+      showMessage('文件过大，上传失败（413）', 'error')
     } else if (error?.response?.status) {
       showMessage(
         `文件上传失败（${error.response.status}）: ` +
           (error.response.data?.message || error.message || '网络错误'),
+        'error',
       )
     } else {
-      showMessage('文件上传失败: ' + (error.message || '网络错误'))
+      showMessage('文件上传失败: ' + (error.message || '网络错误'), 'error')
     }
     // 异常情况下也清空文件选择，避免重复触发 change 不生效
     if (fileInput.value) {
@@ -380,6 +409,42 @@ const handleFileSelect = async (event) => {
     }
   } finally {
     uploading.value = false
+  }
+}
+
+// 更新文件按钮点击：记录待更新 id 并打开文件选择
+const handleUpdateClick = (id) => {
+  if (!isAdmin.value) {
+    showMessage('仅管理员可操作知识库，请联系管理员', 'warning')
+    return
+  }
+  updatingId.value = id
+  updateFileInput.value?.click()
+}
+
+// 选择新文件后按 kb_file_id 增量更新该文档
+const handleUpdateFileSelect = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file || updatingId.value == null) return
+
+  uploading.value = true
+  try {
+    const response = await knowledgeApi.updateFile(updatingId.value, file)
+    if (response.data.code === 0) {
+      showMessage(response.data.message || '文件更新成功')
+      await fetchFileList()
+    } else {
+      showMessage('文件更新失败: ' + (response.data.message || '未知错误'), 'error')
+    }
+  } catch (error) {
+    console.error('更新文件错误:', error)
+    showMessage('文件更新失败: ' + (error?.response?.data?.message || error.message || '网络错误'), 'error')
+  } finally {
+    uploading.value = false
+    updatingId.value = null
+    if (updateFileInput.value) {
+      updateFileInput.value.value = ''
+    }
   }
 }
 
@@ -412,7 +477,7 @@ const handleRowClick = (id) => {
 
 const handleDelete = async (id, fileName) => {
   if (!isAdmin.value) {
-    alert('仅管理员可操作知识库，请联系管理员')
+    showMessage('仅管理员可操作知识库，请联系管理员', 'warning')
     return
   }
   if (!confirm(`确定要删除文件 "${fileName}" 吗？`)) {
@@ -423,7 +488,7 @@ const handleDelete = async (id, fileName) => {
 
 const handleBatchDelete = async () => {
   if (!isAdmin.value) {
-    alert('仅管理员可操作知识库，请联系管理员')
+    showMessage('仅管理员可操作知识库，请联系管理员', 'warning')
     return
   }
   if (selectedIds.value.length === 0) return
@@ -438,15 +503,15 @@ const deleteFiles = async (ids) => {
   try {
     const response = await knowledgeApi.deleteFiles(ids)
     if (response.data.code === 0) {
-      alert(response.data.message || '删除成功')
+      showMessage(response.data.message || '删除成功')
       selectedIds.value = []
       fetchFileList()
     } else {
-      alert('删除失败: ' + (response.data.message || '未知错误'))
+      showMessage('删除失败: ' + (response.data.message || '未知错误'), 'error')
     }
   } catch (error) {
     console.error('删除文件错误:', error)
-    alert('删除失败: ' + (error.message || '网络错误'))
+    showMessage('删除失败: ' + (error.message || '网络错误'), 'error')
   } finally {
     deleting.value = false
   }
@@ -504,16 +569,16 @@ const downloadFiles = async (ids) => {
             await new Promise((resolve) => setTimeout(resolve, 200))
           } catch (urlError) {
             console.error(`URL下载文件 ${file.id} 也失败:`, urlError)
-            alert(`下载文件 "${file.file_name}" 失败`)
+            showMessage(`下载文件 "${file.file_name}" 失败`, 'error')
           }
         } else {
-          alert(`下载文件 "${file.file_name}" 失败: 无可用下载方式`)
+          showMessage(`下载文件 "${file.file_name}" 失败: 无可用下载方式`, 'error')
         }
       }
     }
   } catch (error) {
     console.error('下载文件错误:', error)
-    alert('下载失败: ' + (error.message || '网络错误'))
+    showMessage('下载失败: ' + (error.message || '网络错误'), 'error')
   } finally {
     downloading.value = false
   }

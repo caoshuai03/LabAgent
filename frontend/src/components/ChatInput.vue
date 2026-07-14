@@ -36,32 +36,6 @@
         </button>
 
         <div class="input-actions">
-          <div
-            v-if="!chatStore.isStreaming"
-            class="mode-switch"
-            :class="[{ disabled: chatStore.isStreaming }, `mode-${chatStore.chatMode}`]"
-          >
-            <span class="mode-slider" aria-hidden="true"></span>
-            <button
-              type="button"
-              class="mode-option"
-              :class="{ active: chatStore.chatMode === 'ask' }"
-              :disabled="chatStore.isStreaming"
-              @click="setChatMode('ask')"
-            >
-              Ask
-            </button>
-            <button
-              type="button"
-              class="mode-option"
-              :class="{ active: chatStore.chatMode === 'agent' }"
-              :disabled="chatStore.isStreaming"
-              @click="setChatMode('agent')"
-            >
-              Agent
-            </button>
-          </div>
-
           <button
             v-if="chatStore.isStreaming"
             class="action-button stop-button"
@@ -86,9 +60,7 @@
             v-else
             class="action-button send-button"
             :class="{ 'disabled-btn': !canSend }"
-            v-tooltip="
-              chatStore.chatMode === 'agent' ? '以 Agent 模式发送(Enter)' : '以 Ask 模式发送(Enter)'
-            "
+            v-tooltip="'以 Agent 模式发送(Enter)'"
             @click="handleSend"
           >
             <svg
@@ -113,7 +85,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { sendChatMessage, sendReactAgentMessage } from '../api/chat'
+import { sendReactAgentMessage } from '../api/chat'
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
@@ -200,12 +172,6 @@ const finalizeStreamTask = async (conversationKey, { abort = false, refreshConve
   }
 }
 
-const setChatMode = (mode) => {
-  if (!chatStore.isStreaming) {
-    chatStore.chatMode = mode
-  }
-}
-
 // 长文本输入时切换到更高的编辑态，并通过滞后阈值避免临界高度反复抖动
 const updateExpandedState = (contentHeight) => {
   if (isExpanded.value) {
@@ -279,6 +245,11 @@ const handleInput = () => {
 }
 
 const handleKeyDown = (event) => {
+  // 输入法（IME）组字过程中的回车用于确认候选词，不应触发发送。
+  // isComposing 为标准属性，keyCode === 229 作为部分浏览器/输入法的兜底判断
+  if (event.isComposing || event.keyCode === 229) {
+    return
+  }
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
     if (canSend.value) {
@@ -298,7 +269,6 @@ const handleSend = async () => {
     conversationKey,
     currentUserMessage: message,
     sessionIdReceived: false,
-    mode: chatStore.chatMode,
     abortController: null,
   }
 
@@ -314,9 +284,8 @@ const handleSend = async () => {
   const sessionId = chatStore.isDraftConversationKey(conversationKey) ? '' : conversationKey
   const userId = userStore.userInfo?.id || 1
   const model = chatStore.selectedModel
-  const sendMessage = streamTask.mode === 'agent' ? sendReactAgentMessage : sendChatMessage
 
-  streamTask.abortController = sendMessage(
+  streamTask.abortController = sendReactAgentMessage(
     { message, sessionId, userId, model },
     {
       onMessage: (data) => {
@@ -381,6 +350,11 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     const content = payload.content || ''
     lastMessage.content += content
     chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
+    return
+  }
+
+  if (event.event_type === 'sources') {
+    chatStore.setLastMessageSources(payload.sources || [], streamTask.conversationKey)
     return
   }
 
@@ -566,114 +540,6 @@ onUnmounted(() => {
         height: 20px;
         stroke-width: 2;
       }
-    }
-  }
-}
-
-.mode-switch {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  align-items: center;
-  position: relative;
-  width: 111px;
-  padding: 3px;
-  border-radius: 999px;
-  background: rgba(144, 19, 139, 0.05);
-  border: none;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.65) inset,
-    0 1px 3px rgba(144, 19, 139, 0.06);
-  flex-shrink: 0;
-  transition:
-    box-shadow 0.25s ease,
-    transform 0.2s ease;
-
-  .mode-slider {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: calc((100% - 6px) / 2);
-    height: calc(100% - 6px);
-    border-radius: 999px;
-    background: linear-gradient(180deg, rgba(144, 19, 139, 0.16) 0%, rgba(144, 19, 139, 0.1) 100%);
-    box-shadow: 0 1px 2px rgba(144, 19, 139, 0.08);
-    transition:
-      transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-      background-color 0.28s ease,
-      box-shadow 0.28s ease;
-    pointer-events: none;
-  }
-
-  &.mode-agent .mode-slider {
-    transform: translateX(100%);
-  }
-
-  &.disabled {
-    opacity: 0.55;
-  }
-
-  .mode-option {
-    width: 100%;
-    height: 30px;
-    padding: 0 10px;
-    border: none;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 14px;
-    font-family: inherit;
-    font-weight: 500;
-    line-height: 30px;
-    cursor: pointer;
-    position: relative;
-    z-index: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    vertical-align: middle;
-    outline: none;
-    transition:
-      color 0.24s ease,
-      transform 0.22s ease;
-
-    &:hover:not(:disabled) {
-      color: var(--text-primary);
-    }
-
-    &:disabled {
-      cursor: not-allowed;
-    }
-
-    &:active:not(:disabled) {
-      transform: scale(0.97);
-    }
-
-    &:focus,
-    &:focus-visible {
-      outline: none;
-      box-shadow: none;
-    }
-
-    &.active {
-      color: #5f115c;
-      font-weight: 600;
-
-      &:hover:not(:disabled) {
-        color: #5f115c;
-      }
-    }
-  }
-
-  @media (max-width: 768px) {
-    width: 120px;
-    padding: 3px;
-
-    .mode-option {
-      padding: 0 8px;
-      font-size: 13px;
-      height: 28px;
-      line-height: 28px;
     }
   }
 }
