@@ -30,11 +30,10 @@ def _stream_response(
     message: str,
     session_id: str | None,
     user_id: int,
-    user_role: int,
     model: str | None,
 ) -> StreamingResponse:
     """构建 SSE 流式响应。"""
-    generator = _ai_service.stream_chat(message, session_id, user_id, user_role, model)
+    generator = _ai_service.stream_chat(message, session_id, user_id, model)
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
@@ -45,7 +44,6 @@ async def agent_chat(req: ChatRequest, current_user: CurrentUser) -> StreamingRe
         req.message or "你好",
         req.session_id,
         current_user.id,
-        current_user.role or 0,
         req.model,
     )
 
@@ -70,8 +68,8 @@ async def cancel_agent(req: AgentCancelRequest, current_user: CurrentUser) -> Ba
 
 @router.get("/tools")
 async def list_tools(current_user: CurrentUser) -> BaseResponse[list[ToolDefinitionVO]]:
-    """查询当前用户可用的 Agent 工具。"""
-    return success(tool_registry.definitions(current_user.role or 0))
+    """查询可用的 Agent 工具。"""
+    return success(tool_registry.definitions())
 
 
 @router.post("/rag/history")

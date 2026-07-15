@@ -68,7 +68,6 @@ async def execute_shell(
         decision = tool_policy.evaluate(
             "execute_shell",
             arguments,
-            user_role=int(current_state.get("user_role", 0)),
             workspace=workspace,
         )
         if not decision.allowed:

@@ -83,7 +83,6 @@ class AiService:
         message: str,
         session_id: str | None,
         user_id: int,
-        user_role: int,
         model: str | None,
     ) -> AsyncGenerator[str, None]:
         """开始新的 Agent 运行。"""
@@ -100,7 +99,6 @@ class AiService:
         graph_input = {
             "messages": [HumanMessage(content=message)],
             "user_id": user_id,
-            "user_role": user_role,
             "session_id": session_id_str,
             "model_name": model,
             "agent_run_id": trace_id,

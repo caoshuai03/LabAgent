@@ -77,7 +77,6 @@ class Settings(BaseSettings):
     agent_tools_enabled: bool = True
     file_tools_enabled: bool = True
     shell_tool_enabled: bool = False
-    shell_allowed_roles: str = "admin"
     shell_delete_require_approval: bool = True
     file_write_require_approval: bool = False
     file_move_require_approval: bool = False
@@ -134,22 +133,6 @@ class Settings(BaseSettings):
     def allowed_extension_set(self) -> set[str]:
         """允许上传的扩展名集合（小写，不含点）。"""
         return {ext.strip().lower() for ext in self.upload_allowed_extensions.split(",") if ext.strip()}
-
-    @property
-    def shell_allowed_role_set(self) -> set[int]:
-        """Shell 允许角色集合：user=0、admin=1，也支持直接配置数字。"""
-        role_map = {"user": 0, "admin": 1}
-        result: set[int] = set()
-        for value in self.shell_allowed_roles.split(","):
-            normalized = value.strip().lower()
-            if not normalized:
-                continue
-            if normalized in role_map:
-                result.add(role_map[normalized])
-                continue
-            if normalized.isdigit():
-                result.add(int(normalized))
-        return result
 
 
 @lru_cache

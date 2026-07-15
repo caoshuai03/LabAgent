@@ -57,7 +57,6 @@ async def _invoke_file_tool(
         decision = tool_policy.evaluate(
             tool_name,
             arguments,
-            user_role=int(state.get("user_role", 0)),
             workspace=workspace,
         )
         if not decision.allowed:

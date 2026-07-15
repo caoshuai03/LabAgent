@@ -47,14 +47,14 @@ class ToolRegistry:
         """返回 ToolNode 可执行的全部已注册工具。"""
         return list(self._tools.values())
 
-    def model_tools(self, user_role: int) -> list[BaseTool]:
-        """返回当前用户可绑定给模型的工具。"""
+    def model_tools(self) -> list[BaseTool]:
+        """返回可绑定给模型的工具。"""
         if not settings.agent_tools_enabled:
             return []
         names: list[str] = []
         if settings.file_tools_enabled:
             names.extend(tool_item.name for tool_item in FILE_TOOLS)
-        if settings.shell_tool_enabled and user_role in settings.shell_allowed_role_set:
+        if settings.shell_tool_enabled:
             names.append("execute_shell")
         return [self._tools[name] for name in names]
 
@@ -62,9 +62,9 @@ class ToolRegistry:
         """查询工具元数据。"""
         return self._metadata.get(tool_name)
 
-    def definitions(self, user_role: int) -> list[ToolDefinitionVO]:
-        """返回当前用户工具定义。"""
-        visible_names = {tool_item.name for tool_item in self.model_tools(user_role)}
+    def definitions(self) -> list[ToolDefinitionVO]:
+        """返回工具定义。"""
+        visible_names = {tool_item.name for tool_item in self.model_tools()}
         result: list[ToolDefinitionVO] = []
         for name, tool_item in self._tools.items():
             metadata = self._metadata[name]

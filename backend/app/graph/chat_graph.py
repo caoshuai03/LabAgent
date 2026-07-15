@@ -47,7 +47,6 @@ class AgentState(MessagesState):
     documents: list[Document]
     sources: list[dict[str, str | float | None]]
     user_id: int
-    user_role: int
     session_id: str
     model_name: str | None
     agent_run_id: str
@@ -127,7 +126,7 @@ def _build_graph() -> CompiledStateGraph:
         model_name = configurable.get("model") or state.get("model_name")
         chat_model = model_provider.get_chat_model(model_name)
         round_number = int(state.get("tool_round", 0))
-        tools = tool_registry.model_tools(int(state.get("user_role", 0)))
+        tools = tool_registry.model_tools()
         if round_number >= settings.agent_max_tool_rounds:
             tools = []
         bound_model = chat_model.bind_tools(tools) if tools else chat_model
@@ -161,7 +160,6 @@ def _build_graph() -> CompiledStateGraph:
             decision = tool_policy.evaluate(
                 tool_name,
                 arguments,
-                user_role=int(state.get("user_role", 0)),
                 workspace=workspace,
             )
             if not decision.allowed:

@@ -47,7 +47,6 @@ class ToolPolicy:
         tool_name: str,
         arguments: dict[str, Any],
         *,
-        user_role: int,
         workspace: Path,
     ) -> ToolPolicyDecision:
         """评估工具是否允许以及是否需审批。"""
@@ -56,7 +55,7 @@ class ToolPolicy:
         if tool_name in _FILE_PATH_FIELDS:
             return self._evaluate_file(tool_name, arguments, workspace)
         if tool_name == "execute_shell":
-            return self._evaluate_shell(arguments, user_role)
+            return self._evaluate_shell(arguments)
         return ToolPolicyDecision(False, False, "high", "未注册的工具")
 
     def _evaluate_file(
@@ -81,11 +80,9 @@ class ToolPolicy:
             return ToolPolicyDecision(True, settings.file_move_require_approval, "high")
         return ToolPolicyDecision(True, settings.file_delete_require_approval, "high")
 
-    def _evaluate_shell(self, arguments: dict[str, Any], user_role: int) -> ToolPolicyDecision:
+    def _evaluate_shell(self, arguments: dict[str, Any]) -> ToolPolicyDecision:
         if not settings.shell_tool_enabled:
             return ToolPolicyDecision(False, False, "high", "Shell工具未启用")
-        if user_role not in settings.shell_allowed_role_set:
-            return ToolPolicyDecision(False, False, "high", "当前角色不允许使用Shell")
         commands = arguments.get("commands")
         command_list = commands if isinstance(commands, list) else [commands]
         if not command_list or any(not isinstance(command, str) or not command.strip() for command in command_list):
