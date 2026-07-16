@@ -50,3 +50,12 @@ class ChatToolCallVO(BaseModel):
     round: int
     risk_level: str
     created_at: datetime
+
+
+class WorkspaceFileVO(BaseModel):
+    """工作区文件整文件预览内容。"""
+
+    path: str
+    language: str
+    content: str
+    truncated: bool = False

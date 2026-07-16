@@ -12,7 +12,7 @@ export const useChatStore = defineStore('chat', () => {
   // 当前选中的会话 key：历史会话直接使用 sessionId，新会话使用前端草稿 key
   const activeConversationKey = ref(null)
 
-  // 每个会话单独维护自己的消息、加载和流式状态，避免历史会话切换时串流
+  // 每个会话单独维护自己的消息、加载、流式和右侧预览状态，避免历史会话切换时串流/串预览
   const conversationStates = ref({})
 
   // 侧边栏折叠状态
@@ -28,6 +28,16 @@ export const useChatStore = defineStore('chat', () => {
   // 当前选中的大模型
   const selectedModel = ref('qwen3:8b')
 
+  // 侧栏宽度（像素），由正文/侧栏之间的分隔条拖拽调节
+  const PREVIEW_PANEL_MIN_WIDTH = 320
+  const PREVIEW_PANEL_MAX_WIDTH = 900
+  const previewPanelWidth = ref(460)
+
+  const setPreviewPanelWidth = (width) => {
+    const clamped = Math.min(PREVIEW_PANEL_MAX_WIDTH, Math.max(PREVIEW_PANEL_MIN_WIDTH, width))
+    previewPanelWidth.value = clamped
+  }
+
   const createConversationState = () => ({
     messages: [],
     isLoading: false,
@@ -35,6 +45,9 @@ export const useChatStore = defineStore('chat', () => {
     awaitingApproval: false,
     pendingApproval: null,
     hasLoadedMessages: false,
+    previewPanelOpen: false,
+    previewTabs: [],
+    previewActivePath: '',
   })
 
   const generateDraftConversationKey = () => {
@@ -49,11 +62,27 @@ export const useChatStore = defineStore('chat', () => {
     return typeof conversationKey === 'string' && conversationKey.startsWith(DRAFT_CONVERSATION_PREFIX)
   }
 
+  const ensureConversationPreviewState = (state) => {
+    if (!state) return null
+    if (typeof state.previewPanelOpen !== 'boolean') {
+      state.previewPanelOpen = false
+    }
+    if (!Array.isArray(state.previewTabs)) {
+      state.previewTabs = []
+    }
+    if (typeof state.previewActivePath !== 'string') {
+      state.previewActivePath = ''
+    }
+    return state
+  }
+
   const ensureConversationState = (conversationKey) => {
     if (!conversationKey) return null
 
     if (!conversationStates.value[conversationKey]) {
       conversationStates.value[conversationKey] = createConversationState()
+    } else {
+      ensureConversationPreviewState(conversationStates.value[conversationKey])
     }
 
     return conversationStates.value[conversationKey]
@@ -107,6 +136,34 @@ export const useChatStore = defineStore('chat', () => {
     return getConversationState(activeConversationKey.value)?.messages || []
   })
 
+  const previewPanelOpen = computed(() => {
+    return getConversationState(activeConversationKey.value)?.previewPanelOpen || false
+  })
+
+  const previewTabs = computed(() => {
+    return getConversationState(activeConversationKey.value)?.previewTabs || []
+  })
+
+  const previewActivePath = computed(() => {
+    return getConversationState(activeConversationKey.value)?.previewActivePath || ''
+  })
+
+  // 当前会话的「产物路径集合」：所有 write_file 工具调用的目标路径，
+  // 供正文渲染判定「哪些路径可点击预览」（等价于产物注册，无需新建表）
+  const artifactPaths = computed(() => {
+    const paths = new Set()
+    const list = getConversationState(activeConversationKey.value)?.messages || []
+    list.forEach((message) => {
+      ;(message.toolEvents || []).forEach((event) => {
+        const payload = event?.payload || {}
+        if (payload.tool_name !== 'write_file') return
+        const path = payload.preview_path || payload.arguments?.file_path
+        if (path) paths.add(path)
+      })
+    })
+    return paths
+  })
+
   const isLoading = computed(() => {
     return getConversationState(activeConversationKey.value)?.isLoading || false
   })
@@ -130,6 +187,73 @@ export const useChatStore = defineStore('chat', () => {
   const currentConversation = computed(() => {
     return conversations.value.find((conv) => conv.id === currentConversationId.value)
   })
+
+  /**
+   * 打开工作区文件预览（正文超链接点击触发）
+   * @param {object} payload - { path, language?, content? }；content 为空时由预览面板按需拉取
+   */
+  const openPreview = ({ path, language = '', content = null } = {}) => {
+    if (!path) return
+
+    const state = ensureConversationState(activeConversationKey.value)
+    if (!state) return
+
+    const existing = state.previewTabs.find((tab) => tab.path === path)
+    if (existing) {
+      // 已有 tab：若之前没拿到正文而这次带来了正文，则补上
+      if (content !== null && !existing.content) {
+        existing.content = content
+        existing.language = language || existing.language
+      }
+    } else {
+      state.previewTabs.push({
+        path,
+        language,
+        content,
+        loading: false,
+        error: '',
+      })
+    }
+    state.previewActivePath = path
+    state.previewPanelOpen = true
+  }
+
+  const setPreviewActive = (path) => {
+    const state = getConversationState(activeConversationKey.value, true)
+    if (state?.previewTabs.some((tab) => tab.path === path)) {
+      state.previewActivePath = path
+    }
+  }
+
+  const closePreviewTab = (path) => {
+    const state = getConversationState(activeConversationKey.value, true)
+    if (!state) return
+
+    const index = state.previewTabs.findIndex((tab) => tab.path === path)
+    if (index === -1) return
+
+    state.previewTabs.splice(index, 1)
+    if (state.previewActivePath === path) {
+      const next = state.previewTabs[index] || state.previewTabs[index - 1] || null
+      state.previewActivePath = next ? next.path : ''
+    }
+    // 关闭最后一个 tab 后保留面板（显示空状态提示），由收起按钮显式关闭
+  }
+
+  // 显式展开当前会话侧栏（即使没有任何文件，也展示空状态提示）
+  const openPreviewPanel = () => {
+    const state = ensureConversationState(activeConversationKey.value)
+    if (state) {
+      state.previewPanelOpen = true
+    }
+  }
+
+  const closePreviewPanel = () => {
+    const state = getConversationState(activeConversationKey.value, true)
+    if (state) {
+      state.previewPanelOpen = false
+    }
+  }
 
   /**
    * 创建新对话
@@ -488,6 +612,9 @@ export const useChatStore = defineStore('chat', () => {
               error_message: toolCall.error_message,
               duration_ms: toolCall.duration_ms,
               round: toolCall.round,
+              // 历史消息不带整文件正文，仅保留路径供正文超链接判定与按需预览
+              preview_path:
+                toolCall.tool_name === 'write_file' ? toolCall.arguments?.file_path : undefined,
             },
             ts: toolCall.created_at,
           })
@@ -610,6 +737,17 @@ export const useChatStore = defineStore('chat', () => {
     isNewConversation,
     selectedModel,
     currentConversation,
+    previewPanelOpen,
+    previewTabs,
+    previewActivePath,
+    previewPanelWidth,
+    artifactPaths,
+    openPreview,
+    setPreviewActive,
+    closePreviewTab,
+    openPreviewPanel,
+    closePreviewPanel,
+    setPreviewPanelWidth,
     createConversation,
     setCurrentSessionId,
     setConversationLoading,

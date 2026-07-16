@@ -38,6 +38,51 @@ def test_runner_executes_command_in_workspace(tmp_path: Path, monkeypatch) -> No
     assert "123" in response.json()["output"]
 
 
+def test_runner_supports_shell_operators(tmp_path: Path, monkeypatch) -> None:
+    """Runner 经 bash 执行，&&、管道、重定向等 shell 语法必须生效。"""
+    workspace = tmp_path / "1" / "session"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(runner_app, "_WORKSPACE_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(runner_app, "_RUNNER_TOKEN", "test-token")
+
+    response = TestClient(runner_app.app).post(
+        "/execute",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "commands": ["echo hi > out.txt && cat out.txt"],
+            "workspace_path": str(workspace),
+            "timeout_seconds": 5,
+            "max_output_chars": 1000,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert "hi" in response.json()["output"]
+    assert (workspace / "out.txt").read_text(encoding="utf-8").strip() == "hi"
+
+
+def test_runner_blocks_dangerous_command_after_operator(tmp_path: Path, monkeypatch) -> None:
+    """隐藏在 && 之后的高风险可执行文件也必须被拦截。"""
+    workspace = tmp_path / "1" / "session"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(runner_app, "_WORKSPACE_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(runner_app, "_RUNNER_TOKEN", "test-token")
+
+    response = TestClient(runner_app.app).post(
+        "/execute",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "commands": ["echo hi && docker ps"],
+            "workspace_path": str(workspace),
+            "timeout_seconds": 5,
+            "max_output_chars": 1000,
+        },
+    )
+
+    assert response.status_code == 403
+
+
 def test_runner_rejects_unauthorized_and_blocked_commands(tmp_path: Path, monkeypatch) -> None:
     """Runner 必须拒绝无鉴权请求和高风险可执行文件。"""
     workspace = tmp_path / "1" / "session"
@@ -76,7 +121,6 @@ async def test_shell_tool_treats_none_output_as_failure(tmp_path: Path, monkeypa
             commands="pwd",
             state={
                 "user_id": 1,
-                "user_role": 1,
                 "session_id": session_id,
                 "workspace_path": str(tmp_path / "1" / session_id),
             },

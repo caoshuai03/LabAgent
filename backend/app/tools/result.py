@@ -53,8 +53,15 @@ def result_envelope(
     summary: str = "",
     error: str | None = None,
     duration_ms: int | None = None,
+    preview_path: str | None = None,
+    preview_language: str | None = None,
+    preview_content: str | None = None,
 ) -> str:
-    """构造给 ToolMessage/模型的结构化 JSON 结果。"""
+    """构造给 ToolMessage/模型的结构化 JSON 结果。
+
+    preview_* 为可选的产物预览字段（当前仅 write_file 使用），
+    其余工具不传时不会出现在结果里，对既有契约零影响。
+    """
     payload = {
         "success": success,
         "output": truncate_text(str(redact_value(output))),
@@ -62,6 +69,12 @@ def result_envelope(
         "error": truncate_text(str(redact_value(error)), 500) if error else None,
         "duration_ms": duration_ms,
     }
+    if preview_path is not None:
+        payload["preview_path"] = preview_path
+    if preview_language is not None:
+        payload["preview_language"] = preview_language
+    if preview_content is not None:
+        payload["preview_content"] = truncate_text(str(redact_value(preview_content)))
     return json.dumps(payload, ensure_ascii=False)
 
 

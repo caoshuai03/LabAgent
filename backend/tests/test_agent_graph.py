@@ -69,7 +69,6 @@ def _graph_input(session_id: str) -> dict[str, Any]:
     return {
         "messages": [("user", "执行工具")],
         "user_id": 1,
-        "user_role": 0,
         "session_id": session_id,
         "model_name": None,
         "agent_run_id": uuid.uuid4().hex,
@@ -122,9 +121,11 @@ async def test_agent_executes_file_tool(graph_environment, monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_rejected_delete_does_not_remove_file(graph_environment, monkeypatch) -> None:
     """用户拒绝删除后文件必须保留。"""
+    monkeypatch.setattr(chat_graph.settings, "shell_tool_enabled", True)
+    monkeypatch.setattr(chat_graph.settings, "shell_delete_require_approval", True)
     model = FakeToolModel(
-        tool_name="file_delete",
-        tool_args={"file_path": "output/delete.txt"},
+        tool_name="execute_shell",
+        tool_args={"commands": "rm output/delete.txt"},
         tool_call_id="call-delete",
     )
     monkeypatch.setattr(chat_graph.model_provider, "get_chat_model", lambda model_name=None: model)

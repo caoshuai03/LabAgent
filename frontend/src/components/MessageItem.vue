@@ -5,6 +5,7 @@
         <ToolActivityPanel
           v-if="message.sender === 'assistant' && message.toolEvents?.length"
           :tool-events="message.toolEvents"
+          :session-id="chatStore.currentConversationId || ''"
         />
 
         <div
@@ -46,21 +47,6 @@
               v-tooltip="copied ? '已复制' : '复制'"
             >
               <svg
-                v-if="copied"
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-              <svg
-                v-else
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"
                 height="18"
@@ -176,6 +162,17 @@ const handleCopy = async () => {
 }
 
 const handleCodeBlockClick = async (event) => {
+  // 正文中的产物超链接：点击在右侧预览侧栏打开对应文件
+  const artifactLink = event.target.closest('.artifact-link')
+  if (artifactLink) {
+    event.preventDefault()
+    const path = artifactLink.getAttribute('data-path')
+    if (path) {
+      chatStore.openPreview({ ...findArtifactPreview(path) })
+    }
+    return
+  }
+
   const copyButton = event.target.closest('.code-block-copy')
   if (!copyButton) return
 
@@ -205,6 +202,81 @@ const handleCodeBlockClick = async (event) => {
   }
 }
 
+// 从本条消息的 write_file 工具事件里取回产物的整文件正文与语言（若 SSE 已带），
+// 供点击超链接时直接展示，避免再次请求接口
+const findArtifactPreview = (path) => {
+  const events = props.message.toolEvents || []
+  for (const event of events) {
+    const payload = event?.payload || {}
+    if (payload.tool_name !== 'write_file') continue
+    const eventPath = payload.preview_path || payload.arguments?.file_path
+    if (eventPath === path) {
+      return {
+        path,
+        language: payload.preview_language || '',
+        content: payload.preview_content ?? null,
+      }
+    }
+  }
+  return { path, language: '', content: null }
+}
+
+// 正文渲染后，把命中「本会话产物路径集合」的纯文本路径替换为可点击超链接（DOM 安全，不破坏已有标签）
+const decorateArtifactLinks = () => {
+  if (!messageTextRef.value || props.message.sender !== 'assistant') return
+  const paths = Array.from(chatStore.artifactPaths || [])
+  if (paths.length === 0) return
+  // 长路径优先匹配，避免子串误替换
+  paths.sort((a, b) => b.length - a.length)
+
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`(${paths.map(escapeRegExp).join('|')})`, 'g')
+
+  const walker = document.createTreeWalker(messageTextRef.value, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      // 只跳过已处理的链接内文本；代码块（含 ```text）里的产物路径同样需要可点击
+      if (node.parentElement?.closest('a')) {
+        return NodeFilter.FILTER_REJECT
+      }
+      // 带 g 标志的正则跨节点复用会累积 lastIndex，每次判定前必须重置，避免误判
+      pattern.lastIndex = 0
+      return pattern.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+    },
+  })
+
+  const targets = []
+  let current = walker.nextNode()
+  while (current) {
+    targets.push(current)
+    current = walker.nextNode()
+  }
+
+  targets.forEach((textNode) => {
+    const text = textNode.nodeValue
+    pattern.lastIndex = 0
+    const fragment = document.createDocumentFragment()
+    let lastIndex = 0
+    let match
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+      }
+      const link = document.createElement('a')
+      link.className = 'artifact-link'
+      // data-path 保留完整相对路径（供右侧预览定位并展示完整路径），正文仅显示文件名以免影响阅读体验
+      link.setAttribute('data-path', match[0])
+      link.setAttribute('href', 'javascript:void(0)')
+      link.textContent = match[0].replace(/\\/g, '/').split('/').pop() || match[0]
+      fragment.appendChild(link)
+      lastIndex = match.index + match[0].length
+    }
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
+    }
+    textNode.parentNode.replaceChild(fragment, textNode)
+  })
+}
+
 const addCopyButtons = () => {
   if (!messageTextRef.value) return
 
@@ -230,25 +302,30 @@ const addCopyButtons = () => {
         const tooltipEl = document.createElement('div')
         tooltipEl.className = 'global-tooltip'
         tooltipEl.textContent = tooltipText
+        tooltipEl.style.visibility = 'hidden'
         document.body.appendChild(tooltipEl)
 
         const rect = copyButton.getBoundingClientRect()
         const padding = 12
-        const estimatedWidth = tooltipText.length * 13 + 28
-        const estimatedHalfWidth = estimatedWidth / 2
-
-        let x = rect.left + rect.width / 2
-        x = Math.max(padding + estimatedHalfWidth, x)
-        x = Math.min(window.innerWidth - padding - estimatedHalfWidth, x)
-
-        tooltipEl.style.top = `${rect.top - 8}px`
-        tooltipEl.style.left = `${x}px`
+        const gap = 8
 
         requestAnimationFrame(() => {
+          if (!tooltipEl) return
+
           const tooltipRect = tooltipEl.getBoundingClientRect()
-          if (tooltipRect.top < padding) {
-            tooltipEl.style.top = `${rect.bottom + 8}px`
-          }
+          const halfWidth = tooltipRect.width / 2
+
+          let x = rect.left + rect.width / 2
+          x = Math.max(padding + halfWidth, x)
+          x = Math.min(window.innerWidth - padding - halfWidth, x)
+
+          const hasEnoughTopSpace = rect.top - tooltipRect.height - gap >= padding
+          const y = hasEnoughTopSpace ? rect.top - gap : rect.bottom + gap
+
+          tooltipEl.classList.toggle('below', !hasEnoughTopSpace)
+          tooltipEl.style.top = `${y}px`
+          tooltipEl.style.left = `${x}px`
+          tooltipEl.style.visibility = 'visible'
         })
 
         copyButton._tooltipEl = tooltipEl
@@ -275,6 +352,7 @@ const addCopyButtons = () => {
 onMounted(() => {
   nextTick(() => {
     addCopyButtons()
+    decorateArtifactLinks()
   })
 })
 
@@ -283,6 +361,18 @@ watch(
   () => {
     nextTick(() => {
       addCopyButtons()
+      decorateArtifactLinks()
+    })
+  },
+  { flush: 'post' },
+)
+
+// 产物集合在流式过程中会新增（如先写文件后回答），集合变化后重新装饰正文超链接
+watch(
+  () => chatStore.artifactPaths,
+  () => {
+    nextTick(() => {
+      decorateArtifactLinks()
     })
   },
   { flush: 'post' },
@@ -410,13 +500,27 @@ watch(
   }
 
   :deep(code:not(pre code)) {
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 2px 7px;
+    border-radius: 6px;
     font-family:
       'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-    font-size: 0.9em;
-    background-color: rgba(175, 184, 193, 0.2);
-    color: #d73a49;
+    font-size: 0.88em;
+    background-color: rgba(175, 184, 193, 0.24);
+    color: var(--text-primary, #242424);
+  }
+
+  // 正文中的产物路径超链接：点击在右侧预览侧栏打开
+  :deep(.artifact-link) {
+    color: #90138b;
+    text-decoration: none;
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s ease;
+    word-break: break-all;
+
+    &:hover {
+      border-bottom-color: #90138b;
+    }
   }
 
   :deep(.code-block-wrapper) {
@@ -722,7 +826,6 @@ watch(
 
   &.copied {
     color: #90138b;
-    background: rgba(144, 19, 139, 0.08);
   }
 }
 </style>

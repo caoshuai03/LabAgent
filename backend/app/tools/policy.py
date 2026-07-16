@@ -13,19 +13,22 @@ from app.core.config import settings
 from app.tools.workspace import WorkspaceError, workspace_manager
 
 _FILE_PATH_FIELDS: dict[str, tuple[str, ...]] = {
-    "list_directory": ("dir_path",),
-    "file_search": ("dir_path",),
-    "read_file": ("file_path",),
     "write_file": ("file_path",),
-    "copy_file": ("source_path", "destination_path"),
-    "move_file": ("source_path", "destination_path"),
-    "file_delete": ("file_path",),
 }
 _BLOCKED_EXECUTABLES = {
     "sudo", "su", "mount", "umount", "mkfs", "dd", "shutdown", "reboot",
     "ssh", "scp", "sftp", "telnet", "nc", "ncat", "docker", "podman",
 }
 _DELETE_EXECUTABLES = {"rm", "rmdir", "unlink", "shred"}
+# 只读命令白名单：查看目录、读文件、搜索等，风险最低，直接执行
+_READ_ONLY_EXECUTABLES = {
+    "ls", "cat", "head", "tail", "pwd", "grep", "egrep", "fgrep", "rg",
+    "find", "wc", "stat", "file", "tree", "echo", "which", "diff", "sort", "uniq",
+}
+# 命令分隔符：其后是新的命令段首词
+_SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "|&"}
+# 输出重定向：写文件语义
+_WRITE_REDIRECTS = {">", ">>", "&>", "2>", "2>>"}
 _DANGEROUS_SHELL_PATTERN = re.compile(r"[`\n\r]|\$\(|\b(/dev/|/proc/|/sys/|docker\.sock)\b")
 
 
@@ -65,20 +68,18 @@ class ToolPolicy:
             return ToolPolicyDecision(False, False, "medium", "文件工具未启用")
         try:
             for field in _FILE_PATH_FIELDS[tool_name]:
-                default = "." if field == "dir_path" else ""
-                value = str(arguments.get(field, default))
-                allow_missing = field == "destination_path" or tool_name == "write_file"
-                workspace_manager.validate_relative_path(workspace, value, allow_missing=allow_missing)
+                value = str(arguments.get(field, ""))
+                workspace_manager.validate_relative_path(workspace, value, allow_missing=True)
         except WorkspaceError as exc:
             return ToolPolicyDecision(False, False, "high", str(exc))
 
-        if tool_name in {"list_directory", "file_search", "read_file"}:
-            return ToolPolicyDecision(True, False, "low")
-        if tool_name in {"write_file", "copy_file"}:
-            return ToolPolicyDecision(True, settings.file_write_require_approval, "medium")
-        if tool_name == "move_file":
-            return ToolPolicyDecision(True, settings.file_move_require_approval, "high")
-        return ToolPolicyDecision(True, settings.file_delete_require_approval, "high")
+        return ToolPolicyDecision(True, settings.file_write_require_approval, "medium")
+
+    def _tokenize_shell(self, command: str) -> list[str]:
+        """按 shell 词法拆分命令，将操作符拆成独立 token。"""
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return list(lexer)
 
     def _evaluate_shell(self, arguments: dict[str, Any]) -> ToolPolicyDecision:
         if not settings.shell_tool_enabled:
@@ -89,27 +90,47 @@ class ToolPolicy:
             return ToolPolicyDecision(False, False, "high", "Shell命令不能为空")
         if sum(len(command) for command in command_list) > settings.tool_max_write_chars:
             return ToolPolicyDecision(False, False, "high", "Shell命令过长")
-        requires_approval = False
+        has_delete = False
+        has_write = False
         for command in command_list:
             if _DANGEROUS_SHELL_PATTERN.search(command):
                 return ToolPolicyDecision(False, False, "high", "Shell命令包含禁止的结构或路径")
             try:
-                parts = shlex.split(command)
+                tokens = self._tokenize_shell(command)
             except ValueError:
                 return ToolPolicyDecision(False, False, "high", "Shell命令格式错误")
-            if not parts or Path(parts[0]).name.lower() in _BLOCKED_EXECUTABLES:
-                return ToolPolicyDecision(False, False, "high", "Shell命令被安全策略拒绝")
-            executable = Path(parts[0]).name.lower()
-            is_delete_command = executable in _DELETE_EXECUTABLES or (
-                executable == "find" and "-delete" in parts
-            )
-            requires_approval = requires_approval or is_delete_command
-        needs_confirmation = requires_approval and settings.shell_delete_require_approval
-        return ToolPolicyDecision(
-            True,
-            needs_confirmation,
-            "high" if requires_approval else "medium",
-        )
+            if not tokens:
+                return ToolPolicyDecision(False, False, "high", "Shell命令不能为空")
+            expect_command = True
+            for token in tokens:
+                if token in _WRITE_REDIRECTS:
+                    # 输出重定向属于写操作
+                    has_write = True
+                    expect_command = False
+                    continue
+                if token in _SHELL_SEPARATORS:
+                    expect_command = True
+                    continue
+                if not expect_command:
+                    continue
+                # 命令段首词：判定风险等级
+                executable = Path(token).name.lower()
+                if executable in _BLOCKED_EXECUTABLES:
+                    return ToolPolicyDecision(False, False, "high", "Shell命令被安全策略拒绝")
+                if executable in _DELETE_EXECUTABLES:
+                    has_delete = True
+                elif executable not in _READ_ONLY_EXECUTABLES:
+                    # 不在只读白名单内的命令（如 cp/mv/mkdir/touch/python 等）视为写操作
+                    has_write = True
+                expect_command = False
+            # find -delete 语义为删除
+            if "find" in {Path(token).name.lower() for token in tokens} and "-delete" in tokens:
+                has_delete = True
+        if has_delete:
+            return ToolPolicyDecision(True, settings.shell_delete_require_approval, "high")
+        if has_write:
+            return ToolPolicyDecision(True, False, "medium")
+        return ToolPolicyDecision(True, False, "low")
 
 
 tool_policy = ToolPolicy()

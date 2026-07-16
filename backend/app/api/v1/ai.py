@@ -3,10 +3,13 @@
 @date: 2026-07-12
 @description: AI 对话模块路由——SSE 流式对话、历史、会话列表与删除；用户 ID 取自 JWT
 """
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import CurrentUser, DbSession
+from app.core.errors import BusinessException, ErrorCode
 from app.schemas.chat import (
     ChatMessageVO,
     ChatRequest,
@@ -14,12 +17,16 @@ from app.schemas.chat import (
     HistoryRequest,
 )
 from app.schemas.chat import ChatSessionVO
-from app.schemas.tool import AgentCancelRequest, AgentResumeRequest, ToolDefinitionVO
+from app.schemas.tool import AgentCancelRequest, AgentResumeRequest, ToolDefinitionVO, WorkspaceFileVO
 from app.core.response import BaseResponse, success
 from app.services.ai_service import AiService
 from app.services.message_service import MessageService
 from app.services.session_service import SessionService
+from app.tools.file_tools import preview_language_for
 from app.tools.registry import tool_registry
+from app.tools.result import redact_value, truncate_text
+from app.tools.workspace import WorkspaceError, workspace_manager
+from app.core.config import settings
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -70,6 +77,54 @@ async def cancel_agent(req: AgentCancelRequest, current_user: CurrentUser) -> Ba
 async def list_tools(current_user: CurrentUser) -> BaseResponse[list[ToolDefinitionVO]]:
     """查询可用的 Agent 工具。"""
     return success(tool_registry.definitions())
+
+
+@router.get("/workspace/file", response_model=None)
+async def get_workspace_file(
+    current_user: CurrentUser,
+    db: DbSession,
+    session_id: Annotated[str, Query()],
+    path: Annotated[str, Query()],
+    disposition: Annotated[str, Query()] = "inline",
+) -> StreamingResponse | BaseResponse[WorkspaceFileVO]:
+    """读取当前用户工作区内的文件：inline 返回整文件预览内容，attachment 返回下载流。"""
+    # 强校验会话归属，防止越权读取他人工作区
+    await SessionService(db).get_owned_session(session_id, current_user.id)
+    try:
+        workspace = workspace_manager.ensure_workspace(current_user.id, session_id)
+        target = workspace_manager.validate_relative_path(workspace, path, allow_missing=False)
+    except WorkspaceError as exc:
+        raise BusinessException(ErrorCode.PARAMS_ERROR, str(exc)) from exc
+    if not target.is_file():
+        raise BusinessException(ErrorCode.NOT_FOUND_ERROR, "文件不存在")
+
+    if disposition == "attachment":
+        import io
+
+        headers = {"Content-Disposition": f'attachment; filename="{target.name}"'}
+        return StreamingResponse(
+            io.BytesIO(target.read_bytes()),
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+
+    language = preview_language_for(path)
+    try:
+        workspace_manager.validate_file_size(target, settings.tool_max_output_chars)
+        raw = target.read_text(encoding="utf-8")
+    except WorkspaceError as exc:
+        raise BusinessException(ErrorCode.PARAMS_ERROR, str(exc)) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise BusinessException(ErrorCode.PARAMS_ERROR, "该文件不支持文本预览，请下载查看") from exc
+    content = truncate_text(str(redact_value(raw)))
+    return success(
+        WorkspaceFileVO(
+            path=path,
+            language=language,
+            content=content,
+            truncated=content != raw,
+        )
+    )
 
 
 @router.post("/rag/history")

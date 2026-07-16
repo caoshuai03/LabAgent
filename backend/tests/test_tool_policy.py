@@ -11,18 +11,17 @@ from app.tools.policy import ToolPolicy
 from app.tools.workspace import WorkspaceManager
 
 
-def test_read_file_is_low_risk(tmp_path: Path) -> None:
-    """工作区内读文件不需审批。"""
+def test_write_file_is_medium_risk(tmp_path: Path) -> None:
+    """工作区内写文件默认无需审批。"""
     workspace = WorkspaceManager(str(tmp_path)).ensure_workspace(1, str(uuid.uuid4()))
-    (workspace / "input" / "test.txt").write_text("hello", encoding="utf-8")
 
     decision = ToolPolicy().evaluate(
-        "read_file", {"file_path": "input/test.txt"}, user_role=0, workspace=workspace
+        "write_file", {"file_path": "output/test.txt"}, workspace=workspace
     )
 
     assert decision.allowed is True
     assert decision.requires_approval is False
-    assert decision.risk_level == "low"
+    assert decision.risk_level == "medium"
 
 
 def test_shell_is_disabled_by_default(tmp_path: Path, monkeypatch) -> None:
@@ -31,63 +30,76 @@ def test_shell_is_disabled_by_default(tmp_path: Path, monkeypatch) -> None:
     workspace = WorkspaceManager(str(tmp_path)).ensure_workspace(1, str(uuid.uuid4()))
 
     decision = ToolPolicy().evaluate(
-        "execute_shell", {"commands": "pwd"}, user_role=1, workspace=workspace
+        "execute_shell", {"commands": "pwd"}, workspace=workspace
     )
 
     assert decision.allowed is False
 
 
-def test_shell_requires_admin_and_only_delete_needs_approval(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """开启Shell后仍校验角色，普通命令直行，删除命令需审批。"""
+def test_shell_read_write_delete_tiering(tmp_path: Path, monkeypatch) -> None:
+    """开启Shell后按读写分级：只读命令 low、写命令 medium、删除命令 high 且需审批。"""
     monkeypatch.setattr(settings, "shell_tool_enabled", True)
-    monkeypatch.setattr(settings, "shell_allowed_roles", "admin")
     monkeypatch.setattr(settings, "shell_delete_require_approval", True)
     workspace = WorkspaceManager(str(tmp_path)).ensure_workspace(1, str(uuid.uuid4()))
 
-    user_decision = ToolPolicy().evaluate(
-        "execute_shell", {"commands": "pwd"}, user_role=0, workspace=workspace
+    read_decision = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "pwd"}, workspace=workspace
     )
-    safe_decision = ToolPolicy().evaluate(
-        "execute_shell", {"commands": "pwd"}, user_role=1, workspace=workspace
+    write_decision = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "cp a.txt b.txt"}, workspace=workspace
     )
     delete_decision = ToolPolicy().evaluate(
-        "execute_shell", {"commands": "rm output/test.txt"}, user_role=1, workspace=workspace
+        "execute_shell", {"commands": "rm output/test.txt"}, workspace=workspace
     )
 
-    assert user_decision.allowed is False
-    assert safe_decision.allowed is True
-    assert safe_decision.requires_approval is False
-    assert safe_decision.risk_level == "medium"
+    assert read_decision.allowed is True
+    assert read_decision.requires_approval is False
+    assert read_decision.risk_level == "low"
+    assert write_decision.allowed is True
+    assert write_decision.requires_approval is False
+    assert write_decision.risk_level == "medium"
     assert delete_decision.allowed is True
     assert delete_decision.requires_approval is True
     assert delete_decision.risk_level == "high"
 
 
-def test_file_write_and_move_do_not_need_approval_but_delete_does(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """文件读写和移动直接执行，仅删除文件需要审批。"""
-    monkeypatch.setattr(settings, "file_write_require_approval", False)
-    monkeypatch.setattr(settings, "file_move_require_approval", False)
-    monkeypatch.setattr(settings, "file_delete_require_approval", True)
+def test_shell_rejects_blocked_and_dangerous_commands(tmp_path: Path, monkeypatch) -> None:
+    """危险结构与高风险可执行文件必须被拒绝。"""
+    monkeypatch.setattr(settings, "shell_tool_enabled", True)
     workspace = WorkspaceManager(str(tmp_path)).ensure_workspace(1, str(uuid.uuid4()))
-    (workspace / "output" / "source.txt").write_text("hello", encoding="utf-8")
 
-    write_decision = ToolPolicy().evaluate(
-        "write_file", {"file_path": "output/new.txt"}, user_role=0, workspace=workspace
+    blocked_decision = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "docker ps"}, workspace=workspace
     )
-    move_decision = ToolPolicy().evaluate(
-        "move_file",
-        {"source_path": "output/source.txt", "destination_path": "output/moved.txt"},
-        user_role=0,
-        workspace=workspace,
-    )
-    delete_decision = ToolPolicy().evaluate(
-        "file_delete", {"file_path": "output/source.txt"}, user_role=0, workspace=workspace
+    dangerous_decision = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "cat $(whoami)"}, workspace=workspace
     )
 
-    assert write_decision.requires_approval is False
-    assert move_decision.requires_approval is False
-    assert delete_decision.requires_approval is True
+    assert blocked_decision.allowed is False
+    assert dangerous_decision.allowed is False
+
+
+def test_shell_scans_all_command_segments(tmp_path: Path, monkeypatch) -> None:
+    """操作符后隐藏的命令段也要参与安全扫描与读写分级。"""
+    monkeypatch.setattr(settings, "shell_tool_enabled", True)
+    monkeypatch.setattr(settings, "shell_delete_require_approval", True)
+    workspace = WorkspaceManager(str(tmp_path)).ensure_workspace(1, str(uuid.uuid4()))
+
+    hidden_blocked = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "echo hi && docker ps"}, workspace=workspace
+    )
+    redirect_write = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "echo hi > out.txt"}, workspace=workspace
+    )
+    hidden_delete = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "pwd && rm out.txt"}, workspace=workspace
+    )
+    read_pipe = ToolPolicy().evaluate(
+        "execute_shell", {"commands": "cat a.txt | grep x"}, workspace=workspace
+    )
+
+    assert hidden_blocked.allowed is False
+    assert redirect_write.risk_level == "medium"
+    assert hidden_delete.risk_level == "high"
+    assert hidden_delete.requires_approval is True
+    assert read_pipe.risk_level == "low"

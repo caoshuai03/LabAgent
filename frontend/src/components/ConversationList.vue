@@ -1,5 +1,9 @@
 <template>
-  <div class="conversation-list">
+  <div
+    class="conversation-list"
+    :class="{ 'is-scrolling': isScrolling }"
+    @scroll="handleScroll"
+  >
     <div class="list-container">
       <ConversationItem
         v-for="conversation in chatStore.conversations"
@@ -21,7 +25,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import ConversationItem from './ConversationItem.vue'
@@ -43,6 +47,21 @@ const router = useRouter()
 const route = useRoute()
 const chatStore = useChatStore()
 const openedMenuConversationId = ref(null)
+const isScrolling = ref(false)
+let scrollbarHideTimer = null
+
+// 历史会话滚动条默认隐藏，滚动时短暂显示
+const flashScrollbar = () => {
+  isScrolling.value = true
+  if (scrollbarHideTimer) clearTimeout(scrollbarHideTimer)
+  scrollbarHideTimer = setTimeout(() => {
+    isScrolling.value = false
+  }, 800)
+}
+
+const handleScroll = () => {
+  flashScrollbar()
+}
 
 const handleSelect = (conversationId) => {
   openedMenuConversationId.value = null
@@ -85,6 +104,10 @@ const handleEnterBatchMode = () => {
   openedMenuConversationId.value = null
   emit('enterBatchMode')
 }
+
+onUnmounted(() => {
+  if (scrollbarHideTimer) clearTimeout(scrollbarHideTimer)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -102,11 +125,17 @@ const handleEnterBatchMode = () => {
   }
 
   &::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb-light, rgba(0, 0, 0, 0.15));
+    background: transparent;
     border-radius: 4px;
+    transition: background 0.3s ease;
+  }
+
+  &.is-scrolling::-webkit-scrollbar-thumb,
+  &:hover::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #d1d1d1);
 
     &:hover {
-      background: var(--scrollbar-thumb-hover-light, rgba(0, 0, 0, 0.25));
+      background: var(--scrollbar-thumb-hover, #b0b0b0);
     }
   }
 

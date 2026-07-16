@@ -33,13 +33,7 @@ class ToolRegistry:
                 raise ValueError(f"工具名重复: {tool_item.name}")
             self._tools[tool_item.name] = tool_item
         self._metadata = {
-            "list_directory": ToolMetadata("langchain_file", "low", True),
-            "file_search": ToolMetadata("langchain_file", "low", True),
-            "read_file": ToolMetadata("langchain_file", "low", True),
             "write_file": ToolMetadata("langchain_file", "medium", False),
-            "copy_file": ToolMetadata("langchain_file", "medium", False),
-            "move_file": ToolMetadata("langchain_file", "high", False),
-            "file_delete": ToolMetadata("langchain_file", "high", False),
             "execute_shell": ToolMetadata("langchain_shell", "high", False),
         }
 
@@ -71,9 +65,7 @@ class ToolRegistry:
             enabled = name in visible_names
             requires_approval = (
                 settings.shell_delete_require_approval if name == "execute_shell"
-                else settings.file_delete_require_approval if name == "file_delete"
-                else settings.file_move_require_approval if name == "move_file"
-                else settings.file_write_require_approval if name in {"write_file", "copy_file"}
+                else settings.file_write_require_approval if name == "write_file"
                 else False
             )
             result.append(

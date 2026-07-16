@@ -48,17 +48,34 @@ def _workspace(value: str) -> Path:
     return path
 
 
-def _command_parts(command: str) -> list[str]:
-    """将单条命令解析为参数列表，不经过 shell 解释器。"""
+# shell 控制操作符：其后的第一个词是新的命令首词
+_SHELL_OPERATORS = {";", "&&", "||", "|", "&", "|&", "\n"}
+
+
+def _tokenize(command: str) -> list[str]:
+    """按 shell 词法拆分命令，将操作符拆成独立 token（供安全扫描）。"""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
     try:
-        parts = shlex.split(command)
+        return list(lexer)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Shell命令格式错误") from exc
-    if not parts:
+
+
+def _guard_command(command: str) -> None:
+    """遍历命令中每个命令段的首词，拦截被禁用的可执行文件。"""
+    tokens = _tokenize(command)
+    if not tokens:
         raise HTTPException(status_code=400, detail="Shell命令不能为空")
-    if Path(parts[0]).name.lower() in _BLOCKED_EXECUTABLES:
-        raise HTTPException(status_code=403, detail="Shell命令被安全策略拒绝")
-    return parts
+    expect_command = True
+    for token in tokens:
+        if token in _SHELL_OPERATORS:
+            expect_command = True
+            continue
+        if expect_command:
+            if Path(token).name.lower() in _BLOCKED_EXECUTABLES:
+                raise HTTPException(status_code=403, detail="Shell命令被安全策略拒绝")
+            expect_command = False
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
@@ -79,11 +96,13 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
-async def _run_command(parts: list[str], workspace: Path, timeout_seconds: int) -> tuple[int, str]:
-    """执行单条命令并合并 stdout/stderr。"""
+async def _run_command(command: str, workspace: Path, timeout_seconds: int) -> tuple[int, str]:
+    """经 bash 执行整条命令并合并 stdout/stderr。"""
     env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL", "TZ"}}
     process = await asyncio.create_subprocess_exec(
-        *parts,
+        "bash",
+        "-lc",
+        command,
         cwd=workspace,
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -108,9 +127,8 @@ async def execute(
     workspace = _workspace(request.workspace_path)
     outputs: list[str] = []
     for command in request.commands:
-        return_code, output = await _run_command(
-            _command_parts(command), workspace, request.timeout_seconds
-        )
+        _guard_command(command)
+        return_code, output = await _run_command(command, workspace, request.timeout_seconds)
         outputs.append(f"$ {command}\n{output}")
         if return_code != 0:
             combined = "\n".join(outputs)

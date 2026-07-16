@@ -314,6 +314,10 @@ class AiService:
                         }
                         if output_preview is not None:
                             result_payload["output_preview"] = output_preview
+                        # write_file 的整文件预览字段（若存在）透传给前端，其他工具不带
+                        for preview_field in ("preview_path", "preview_language", "preview_content"):
+                            if result.get(preview_field) is not None:
+                                result_payload[preview_field] = result.get(preview_field)
                         yield _sse_event(
                             "tool_result",
                             session_id,

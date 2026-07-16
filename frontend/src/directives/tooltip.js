@@ -9,34 +9,32 @@ export const tooltipDirective = {
       tooltipEl = document.createElement('div')
       tooltipEl.className = 'global-tooltip'
       tooltipEl.textContent = text
+      tooltipEl.style.visibility = 'hidden'
       document.body.appendChild(tooltipEl)
 
       const rect = el.getBoundingClientRect()
       const padding = 12
+      const gap = 8
 
-      // Estimate width
-      const estimatedWidth = text.length * 13 + 28
-      const estimatedHalfWidth = estimatedWidth / 2
-
-      // Calculate x, ensure it doesn't overflow horizontally
-      let x = rect.left + rect.width / 2
-      x = Math.max(padding + estimatedHalfWidth, x)
-      x = Math.min(window.innerWidth - padding - estimatedHalfWidth, x)
-
-      // Initial top position (above the element)
-      let y = rect.top - 8
-
-      tooltipEl.style.top = `${y}px`
-      tooltipEl.style.left = `${x}px`
-
-      // Adjust if it goes above the viewport
       requestAnimationFrame(() => {
         if (!tooltipEl) return
+
         const tooltipRect = tooltipEl.getBoundingClientRect()
-        if (tooltipRect.top < padding) {
-          y = rect.bottom + 8 // Move below the element
-          tooltipEl.style.top = `${y}px`
-        }
+        const halfWidth = tooltipRect.width / 2
+
+        // 水平方向居中展示，并避开视口边缘
+        let x = rect.left + rect.width / 2
+        x = Math.max(padding + halfWidth, x)
+        x = Math.min(window.innerWidth - padding - halfWidth, x)
+
+        const hasEnoughTopSpace = rect.top - tooltipRect.height - gap >= padding
+        const placement = hasEnoughTopSpace ? 'top' : 'bottom'
+        const y = hasEnoughTopSpace ? rect.top - gap : rect.bottom + gap
+
+        tooltipEl.classList.toggle('below', placement === 'bottom')
+        tooltipEl.style.top = `${y}px`
+        tooltipEl.style.left = `${x}px`
+        tooltipEl.style.visibility = 'visible'
       })
     }
 

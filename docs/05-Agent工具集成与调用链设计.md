@@ -825,8 +825,190 @@ backend/app/
 - 第一版保留 RAG 前置节点，避免 Agent 改造导致第三阶段知识问答能力倒退。
 - Shell 能力只有在受控 runner、工作区隔离和服务端授权满足时才可开启；删除类命令额外经过前端内联审批，不因为框架提供了 `ShellTool` 就直接执行宿主命令。
 
+## 二十二、工具粒度演进：从细粒度文件工具到统一终端工具（调研）
+
+> 本节为 2026-07-15 追加的调研，起因：实测中「当前文件夹有什么，把这个任务保存到 test.py」这类简单指令，
+> Agent 需要连续调用 `list_directory` + `write_file` 多个细粒度文件工具，前端工具卡片信息零散、无法直观展示，
+> 用户体感是「一堆看不到细节的文件操作」。调研 Codex 等主流编码 Agent 的做法后沉淀改造方向。**本节仅设计，暂不改代码。**
+
+### 22.1 现状问题
+
+当前 LabAgent 对模型暴露 8 个工具（见 [四、工具清单](#四工具清单与参数设计)）：
+`list_directory`、`file_search`、`read_file`、`write_file`、`copy_file`、`move_file`、`file_delete`、`execute_shell`。
+
+- **工具太多太碎**：一个「看目录 + 写文件」任务要 2~3 次工具往返，Agent 轮次多、延迟高、Token 消耗大。
+- **展示零散**：每个细粒度工具是一张独立卡片，用户看不到「到底做了什么」的连贯过程（如截图：只有「查看了文件」「已写入文件 test.py」两条干巴巴的记录，展开也没有命令细节）。
+- **能力仍有限**：细粒度文件工具无法覆盖「运行代码、跑测试、grep、组合管道」等真实编码场景，而这些用一条 shell 命令就能完成。
+
+### 22.2 Codex / GPT-5.1 的做法（调研结论）
+
+主流本地编码 Agent（OpenAI Codex CLI、GPT-5.1）收敛到**极少数通用工具**：
+
+- **`shell`（exec）工具**：让模型运行任意 shell 命令。查看目录（`ls`）、读文件（`cat`）、搜索（`grep`/`rg`）、运行代码、跑测试，全部通过一条命令完成，不再为每种文件操作单独造工具。
+- **`apply_patch` 工具**：专门用于**可靠地编辑/创建文件**（以结构化 patch 形式增删改），比让模型直接 `echo >` 写文件更精确、更可控。
+- Codex 的安全不靠「限制工具种类」，而靠**沙箱 + 审批策略**（execpolicy / linux-sandbox）：命令在受限沙箱执行，越权操作需用户批准。
+
+核心理念：**工具少而通用，安全交给沙箱和审批，而不是靠切碎工具粒度。** 这与本项目第七章「Shell 受控执行」的沙箱思路一致。
+
+### 22.3 LabAgent 改造方向
+
+保留第七章已设计的沙箱 + 审批体系，把工具从「8 个细粒度」收敛为「统一终端工具为主」：
+
+**方案（推荐）：以 `execute_shell` 为主工具 + 保留 `write_file` 做可靠写入**
+
+| 能力 | 现状 | 改造后 |
+| :--- | :--- | :--- |
+| 看目录 / 读文件 / 搜索 | `list_directory` / `read_file` / `file_search` | 统一走 `execute_shell`（`ls` / `cat` / `grep`） |
+| 复制 / 移动 / 删除 | `copy_file` / `move_file` / `file_delete` | 统一走 `execute_shell`（`cp` / `mv` / `rm`，`rm` 命中删除类审批） |
+| 写入 / 创建文件 | `write_file` | **保留**：多行内容、代码写入用专门工具比 shell 里 `echo`/heredoc 更可靠（对齐 Codex 的 `apply_patch` 思路） |
+
+- **好处**：工具从 8 个降到 2 个（`execute_shell` + `write_file`），Agent 单轮就能完成「看目录 + 写文件」，轮次和延迟显著下降；前端只需展示「执行的命令 + 输出」，天然对齐第六章 Codex 风格活动展示。
+- **安全不降级**：所有 shell 命令仍走第七章沙箱 + 命令策略（`_BLOCKED_EXECUTABLES` / 危险模式拦截）+ 删除类审批；写文件仍受工作区路径隔离约束。
+- **风险分级调整**：`execute_shell` 只读类命令（`ls`/`cat`/`grep`）视为 `low`，写/删类命令按现有策略升级为 `medium`/`high`。这需要命令解析来区分（比按工具名分级更细，属实现细节）。
+
+**取舍说明**：
+
+- 是否引入 Codex 式 `apply_patch`（结构化 diff 编辑）本阶段**不做**，成本高且当前 `write_file` 已能满足教学场景的整文件写入；先用「shell + write_file」验证收敛效果。
+- 若要完全对齐 Codex 只留一个 shell 工具，需让模型用 heredoc 写文件，可靠性和可读性都更差，不推荐。
+
+### 22.4 待办（不在本次）
+
+- [ ] `registry.py` 收敛工具集：默认只暴露 `execute_shell` + `write_file`，其余文件工具降级为「可选/关闭」或移除。
+- [ ] `policy.py` 增加 shell 命令**读写分级**：只读命令 `low` 直行，写/删命令按 `medium`/`high` 审批。
+- [ ] 前端工具卡片以「命令 + 输出」为主视图（第六章已有 Codex 风格展示基础，减少细粒度文件卡片类型）。
+- [ ] 确认沙箱（第七章 Tool Runner）落地后再放开 shell 为主力工具；沙箱未就绪前维持现状。
+- [ ] 评估是否需要 `apply_patch` 式结构化编辑（后续阶段，非本阶段）。
+
+---
+
+## 二十三、工作区文件预览：对齐 Codex 的「产物可见」体验（调研）
+
+> 本节为 2026-07-15 追加的调研，起因：Agent 通过 `write_file` 写入 `test.py` 后，
+> 前端工具卡片只显示「已写入文件 test.py」一行文字，用户无法直接看到写了什么内容、也无法预览代码或 Markdown。
+> 用户希望像 Codex 那样「产物可见」——写完文件能在界面上预览，且不仅是代码，还包括 Markdown 等常见内容。**本节仅设计，暂不改代码。**
+
+### 23.1 现状问题
+
+- `write_file` 工具执行后，`result_envelope` 只回传 `summary="已写入文件 {path}"`（见 [file_tools.py](../backend/app/tools/file_tools.py)），
+  `output` 是 `FileManagementToolkit` 的文字回执，**不含文件正文**。
+- 前端 [ToolActivityPanel.vue](../frontend/src/components/ToolActivityPanel.vue) 对 `write_file` 只走默认分支展示一行摘要，没有预览入口。
+- 工作区文件（`data/tool-workspaces/{user_id}/{session_id}/`）目前**没有任何对前端可读的接口**：
+  知识库文件走 MinIO + `GET /knowledge/downloadFile/{id}`（见 [knowledge.py](../backend/app/api/v1/knowledge.py)），
+  但 Agent 工作区文件在本地磁盘卷里，前端拿不到。
+
+### 23.2 Codex 的做法与本项目的取舍（调研结论）
+
+主流本地编码 Agent（OpenAI Codex CLI）的「产物可见」是：
+
+- **编辑通过 `apply_patch` 完成**，其参数本身就是结构化 diff（哪些行增/删/改），TUI 直接渲染成带颜色的「+ 绿 / - 红」变更视图——预览的数据来自工具调用本身。
+- **查看/读取通过 `shell`（`cat`/`sed -n`）完成**，输出即命令结果。
+
+**本项目明确不做 diff 展示**：LabAgent 用的是 `write_file`（整文件写入，非 diff patch），面向的是高校实验教学场景（写作业代码、生成 Markdown 说明等整文件产物），而非在既有大代码库里改几行。
+因此**预览就是「整文件内容」**，按内容类型（代码 / Markdown / 纯文本）渲染即可，不需要计算和渲染逐行 diff。真正值得借鉴 Codex 的只有一点：**展示层按内容类型渲染工具产物**。
+
+### 23.3 LabAgent 改造方向
+
+分两层，**推荐组合 A + B**：
+
+**A. `write_file` 结果携带内容预览（轻量，改动小）**
+
+- `write_file` 成功后，在 `result_envelope` 里新增预览字段，随 `tool_result` SSE 事件下发：
+  - `preview_path`：相对工作区路径（如 `output/test.py`）。
+  - `preview_language`：由扩展名推断（`.py`→python、`.md`→markdown、`.java`→java、`.txt`→text…）。
+  - `preview_content`：写入的**整文件正文**，复用现有 `truncate_text` 截断（超长只给前 N 字符 + 提示，避免 SSE 过大）。
+- 优点：无需新接口，写完即可预览，数据就是刚写入的内容（无一致性问题）。
+- 局限：只覆盖「刚写入」的文件；用户想看**别的已存在文件**或**完整超长文件**时不够。
+
+**B. 新增工作区文件只读接口（通用，覆盖 A 的局限，兼顾预览与下载）**
+
+- 新增 `GET /ai/workspace/file`，入参 `session_id` + 相对路径，用 `disposition` 区分两种用途：
+  - `disposition=inline`（默认）：返回文件内容供**预览**，前端按 `preview_language` 渲染。
+  - `disposition=attachment`：以 `StreamingResponse` + `Content-Disposition: attachment` 返回**下载**流
+    （对齐知识库 [knowledge.py](../backend/app/api/v1/knowledge.py) 的 `GET /knowledge/downloadFile/{id}` 下载方式）。
+- 复用既有安全设施：
+  - `CurrentUser` 从 JWT 取 `user_id`，`WorkspaceManager.ensure_workspace(user_id, session_id)` 定位工作区，
+    **强校验会话归属**（防止越权读他人工作区）。
+  - `validate_relative_path(..., allow_missing=False)` 做路径穿越 / 软链接越界防护（工作区安全能力已在 [workspace.py](../backend/app/tools/workspace.py) 就绪）。
+  - `validate_file_size` 做大小上限：超限的文本/代码不内联预览，改为提示走**下载**；二进制文件一律只提供下载。
+- 前端点击文件卡片的「预览」入口时，按需调此接口拉取内容渲染；「下载」入口则以 `attachment` 拉流保存。
+
+**前端渲染（整文件预览，不做 diff；对齐图2 的「代码 + Markdown 等常见内容」）**
+
+- 代码类（`.py`/`.java`/`.js`/`.json`…）：整文件语法高亮代码块（前端已有 Markdown 渲染栈，可复用其代码高亮）。
+- Markdown（`.md`/`.markdown`）：渲染为富文本预览，可提供「源码 / 渲染」切换。
+- 纯文本（`.txt`/`.log`）：等宽纯文本展示。
+- 其他二进制（图片等）：本阶段不做内联预览，仅提供**下载**（走接口 B 的 `disposition=attachment`），避免范围膨胀。
+- 每类文件卡片统一提供「下载」入口（无论能否预览都可下载），预览仅对可读文本/代码/Markdown 生效。
+
+### 23.4 SSE 与契约影响
+
+- 沿用第十章统一外层结构，仅在 `tool_result` 的 `payload` 里为 `write_file` 增补可选字段
+  `preview_path` / `preview_language` / `preview_content`（其他工具不带，前端按存在与否判断）。
+- 字段全程蛇形命名，与既有契约一致（见 [十、SSE 事件设计](#十sse-事件设计)）。
+- 安全：预览内容同样经 `redact_value` 脱敏（工具产物本就视为不可信数据，且可能含密钥）。
+
+### 23.5 待办（不在本次）
+
+- [ ] `file_tools.py`：`write_file` 成功时在 envelope 增补 `preview_path`/`preview_language`/`preview_content`（复用 `truncate_text`）。
+- [ ] `result.py`：`result_envelope` 支持可选预览字段（保持对其他工具零影响）。
+- [ ] 新增 `GET /ai/workspace/file` 只读接口：JWT 归属校验 + `validate_relative_path(allow_missing=False)` + 大小上限；`disposition=inline` 预览、`disposition=attachment` 流式下载。
+- [ ] `ToolActivityPanel.vue`：`write_file` 卡片加「预览」与「下载」入口，预览按 `preview_language` 分代码 / Markdown / 纯文本渲染。
+- [ ] 二进制/图片仅下载，不做内联预览。
+
+> **落地进度（2026-07-15）**：23.5 前四项已实现——`result_envelope` 支持可选预览字段、`write_file` 成功回传整文件正文、
+> 新增 `GET /ai/workspace/file`（inline/attachment 双模式）、`ToolActivityPanel.vue` 工具卡片内可展开预览 + 下载。
+> 但工具卡片内预览属于「工具调用详情」，用户默认不会展开查看，见下方 23.6 的交互升级。
+
+### 23.6 交互升级：正文超链接 + 右侧预览侧栏（调研，暂不改代码）
+
+> 起因（2026-07-15 二次反馈）：工具卡片内的预览「不是每个人都会去看」，但**正文里 AI 返回的产物路径才是用户真正会关注的**。
+> 期望对齐 Codex/IDE 式体验：**正文中的产物路径渲染成超链接，点击后在右侧新开预览侧栏**，支持多文件同时预览（tab 页签）、可收起侧栏、显示文件路径与整文件正文；**不需要代码行号**。
+
+#### 23.6.1 目标交互
+
+- **正文超链接**：AI 回答正文里出现的工作区产物路径（如 `output/20260715_test.py`）渲染为可点击超链接，而非纯文本。
+- **右侧预览侧栏**：点击超链接在聊天区右侧滑出独立预览面板（不遮挡对话），面板内：
+  - **多文件 tab**：点击多个不同路径时以页签并存，可切换、可关闭单个 tab（对齐图2 顶部 `workspace.py +` 的多标签形态）。
+  - **顶部工具条**：显示当前文件相对路径、下载按钮、收起侧栏按钮。
+  - **正文内容**：整文件渲染（代码高亮 / Markdown / 纯文本），**不显示行号**、不做 diff。
+- **降级**：窄屏（移动端）无右侧空间时，超链接点击回退为「就地展开」或全屏浮层，不强行分栏。
+
+#### 23.6.2 「正文如何知道哪些路径是产物」——落到「产物注册」
+
+这一步正是上一轮讨论的**产物注册与会话绑定**的真正用武之地。核心问题：AI 正文是自由文本，不能靠正则乱猜哪个词是文件路径（会误伤普通文本里的 `a/b`）。因此需要一份**权威的本会话产物清单**来做「路径 → 是否可预览」的判定：
+
+- **数据来源（无需建新表）**：本会话所有 `write_file` 的 `chat_tool_call` 记录，其 `arguments.file_path` 即产物相对路径集合。这就是「产物注册表」的等价物——**产物 = 工作区文件、注册 = write_file 的 tool_call 记录、绑定 = session_id**。
+- **前端消费**：前端已持有本轮 `toolEvents`（含 `write_file` 的 `preview_path`）。渲染正文时，用「本会话产物路径集合」做匹配——**只有命中集合的路径才渲染成超链接**，其余文本原样输出。这样既精准又零误伤。
+- **历史消息**：会话历史里同样能从 `chat_tool_call` 取回产物清单（已有归属校验），保证刷新/重进会话后正文超链接依旧可点。
+
+> 结论：**不需要新增 artifact 表**；「产物注册」通过既有 `chat_tool_call` 的 write_file 记录 + 前端产物路径集合即可实现。若未来要做跨会话资产库/版本管理再单独抽象。
+
+#### 23.6.3 前端改造点（调研，非本次实现）
+
+- **正文渲染管道**（[markdown.js](../frontend/src/utils/markdown.js) / [MessageItem.vue](../frontend/src/components/MessageItem.vue)）：
+  在 `renderMarkdown` 结果基础上，对命中本会话产物集合的路径包一层 `<a class="artifact-link" data-path="...">`；
+  点击事件统一在 `MessageItem` 的 `handleCodeBlockClick` 同级处理（事件委托），阻止默认跳转，改为通知预览侧栏。
+- **预览侧栏组件**（新增，如 `WorkspacePreviewPanel.vue`）：
+  - 状态放在 chat store（`previewTabs: [{path, language, content, loading}]` + `activePath` + `panelOpen`），保证多 tab、跨消息共享。
+  - 打开某路径时：若 `toolEvents` 已带整文件正文直接用；否则调 `GET /ai/workspace/file?disposition=inline` 按需拉取（接口已就绪）。
+  - 顶部下载按钮复用 `downloadWorkspaceFile`（`disposition=attachment`）。
+  - 渲染复用现有代码高亮/Markdown 栈，但**关闭行号**、去掉工具卡片里的语言小标签冗余。
+- **布局**（[Chat.vue](../frontend/src/views/Chat.vue)）：`chat-container` 由 `Sidebar + ChatMain` 两栏扩展为「Sidebar + ChatMain +（可选）PreviewPanel」；`panelOpen` 控制右栏显隐，宽屏分栏、窄屏浮层。
+- **后端**：无需新增接口，`GET /ai/workspace/file` 的 inline/attachment 已覆盖预览与下载。
+
+#### 23.6.4 待办（后续实现）
+
+- [ ] 前端：在 chat store 增加预览侧栏状态（多 tab、activePath、panelOpen）与打开/关闭/切换 action。
+- [ ] 前端：正文渲染时按「本会话产物路径集合」把命中路径渲染为 `artifact-link` 超链接，事件委托打开侧栏。
+- [ ] 前端：新增 `WorkspacePreviewPanel.vue`（多 tab、路径展示、下载、收起，**无行号**、非 diff）。
+- [ ] 前端：`Chat.vue` 布局支持右侧预览栏，宽屏分栏 / 窄屏浮层降级。
+- [ ] 复用：产物路径集合从 `toolEvents`（实时）与 `chat_tool_call`（历史）两处获取，无需新建表、无需新接口。
+
+---
+
 ## 参考文档
 
 - [LangChain Tools](https://docs.langchain.com/oss/python/langchain/tools)
 - [LangGraph Workflows and agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents)
 - [LangGraph Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts)
+- [OpenAI Codex](https://github.com/openai/codex)（shell + apply_patch 双工具、sandbox/execpolicy 安全模型）

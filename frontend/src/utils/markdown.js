@@ -22,6 +22,10 @@ const md = new MarkdownIt({
   breaks: false, // 将换行符转换为 <br>
 })
 
+// 关闭模糊链接识别：避免把「冒泡排序思考.md」「bubble_sort.py」等文件名（.md/.py 恰是真实顶级域名）
+// 误判成外链，从而抢占产物路径超链接并触发错误跳转；仅保留带 http(s):// 协议的显式链接自动识别
+md.linkify.set({ fuzzyLink: false, fuzzyEmail: false })
+
 // 自定义代码块渲染规则，避免 markdown-it 自动包裹 <pre>
 md.renderer.rules.fence = function (tokens, idx, options, env, self) {
   const token = tokens[idx]

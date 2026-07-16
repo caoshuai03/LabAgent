@@ -1,6 +1,12 @@
 <template>
   <div class="message-list-wrapper">
-    <div class="message-list" ref="messageListRef" @scroll="handleScroll" @wheel="handleWheel">
+    <div
+      class="message-list"
+      :class="{ 'is-scrolling': isScrolling }"
+      ref="messageListRef"
+      @scroll="handleScroll"
+      @wheel="handleWheel"
+    >
       <MessageItem
         v-for="message in chatStore.messages"
         :key="message.id"
@@ -52,6 +58,17 @@ const messageListRef = ref(null)
 const userHasScrolledUp = ref(false)
 const showScrollToBottomButton = ref(false)
 
+// 正文滚动条默认隐藏，滚动时才显示，停止后延时淡出
+const isScrolling = ref(false)
+let scrollbarHideTimer = null
+const flashScrollbar = () => {
+  isScrolling.value = true
+  if (scrollbarHideTimer) clearTimeout(scrollbarHideTimer)
+  scrollbarHideTimer = setTimeout(() => {
+    isScrolling.value = false
+  }, 800)
+}
+
 const BOTTOM_THRESHOLD = 100
 
 // 检查当前是否在底部区域
@@ -84,6 +101,8 @@ const handleWheel = (e) => {
  */
 const handleScroll = () => {
   if (!messageListRef.value) return
+
+  flashScrollbar()
 
   if (checkIsAtBottom()) {
     // 在底部 → 无论是程序滚动还是用户滚动，都恢复自动跟随
@@ -206,8 +225,14 @@ onMounted(() => {
   }
 
   &::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb);
+    background: transparent;
     border-radius: 4px;
+    transition: background 0.3s ease;
+  }
+
+  // 仅在滚动时显示滚动条，停止后淡出
+  &.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
 
     &:hover {
       background: var(--scrollbar-thumb-hover);

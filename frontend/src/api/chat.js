@@ -90,6 +90,31 @@ export const getAgentTools = () => {
   return apiClient.get('/v1/ai/tools')
 }
 
+/**
+ * 预览工作区文件（整文件内容，非 diff）
+ * @param {string} sessionId - 会话ID
+ * @param {string} path - 工作区相对路径
+ * @returns {Promise} { path, language, content, truncated }
+ */
+export const getWorkspaceFilePreview = (sessionId, path) => {
+  return apiClient.get('/v1/ai/workspace/file', {
+    params: { session_id: sessionId, path, disposition: 'inline' },
+  })
+}
+
+/**
+ * 下载工作区文件
+ * @param {string} sessionId - 会话ID
+ * @param {string} path - 工作区相对路径
+ * @returns {Promise} 文件 blob 数据
+ */
+export const downloadWorkspaceFile = (sessionId, path) => {
+  return apiClient.get('/v1/ai/workspace/file', {
+    params: { session_id: sessionId, path, disposition: 'attachment' },
+    responseType: 'blob',
+  })
+}
+
 const sendSseRequest = (url, body, callbacks) => {
   const { onMessage, onError, onComplete } = callbacks
 

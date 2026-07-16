@@ -41,6 +41,11 @@ import ToastContainer from './components/ToastContainer.vue'
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.global-tooltip.below {
+  transform: translateX(-50%);
+  animation-name: globalTooltipFadeInBelow;
+}
+
 @keyframes globalTooltipFadeIn {
   from {
     opacity: 0;
@@ -49,6 +54,17 @@ import ToastContainer from './components/ToastContainer.vue'
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(-100%) translateY(0);
+  }
+}
+
+@keyframes globalTooltipFadeInBelow {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
   }
 }
 </style>

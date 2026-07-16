@@ -79,12 +79,8 @@ class Settings(BaseSettings):
     shell_tool_enabled: bool = False
     shell_delete_require_approval: bool = True
     file_write_require_approval: bool = False
-    file_move_require_approval: bool = False
-    file_delete_require_approval: bool = True
     tool_workspace_root: str = "./data/tool-workspaces"
-    tool_max_read_chars: int = 12000
     tool_max_write_chars: int = 24000
-    tool_max_search_results: int = 50
     tool_max_output_chars: int = 12000
     tool_timeout_seconds: int = 60
     shell_timeout_seconds: int = 20
