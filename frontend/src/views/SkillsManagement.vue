@@ -75,6 +75,7 @@ import { ref, onMounted, computed } from 'vue'
 import { getSkills } from '../api/skills'
 import Sidebar from '../components/Sidebar.vue'
 import { useChatStore } from '../stores/chat'
+import { escapeHtml } from '../utils/html'
 
 const chatStore = useChatStore()
 
@@ -87,15 +88,6 @@ const renderMarkdown = (content) => {
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-
-  const escapeHtml = (text) => {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-  }
 
   const formatInline = (text) => {
     return escapeHtml(text)

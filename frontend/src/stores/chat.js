@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getUserSessions, getSessionHistory, deleteSession, deleteSessions } from '../api/chat'
+import { DEFAULT_MODEL } from '../constants/models'
 
 const CURRENT_CONVERSATION_STORAGE_KEY = 'chat_current_conversation_id'
 const DRAFT_CONVERSATION_PREFIX = '__draft_conversation__'
-const DEFAULT_MODEL = 'qwen3:8b'
 
 export const useChatStore = defineStore('chat', () => {
   // 会话列表

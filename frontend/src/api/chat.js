@@ -1,4 +1,4 @@
-import apiClient from './index'
+import apiClient, { buildApiUrl } from './index'
 
 /**
  * 聊天相关 API
@@ -53,7 +53,6 @@ export const deleteSessions = (sessionIds) => {
  * @param {Object} params - 请求参数
  * @param {string} params.message - 用户消息
  * @param {string} [params.sessionId] - 会话ID，新会话时为空
- * @param {number} [params.userId=1] - 用户ID
  * @param {string} [params.model] - 大模型名称
  * @param {Object} callbacks - 回调函数集合
  * @param {Function} callbacks.onMessage - 收到消息时的回调 (data: string) => void
@@ -64,7 +63,7 @@ export const deleteSessions = (sessionIds) => {
 export const sendReactAgentMessage = (params, callbacks) => {
   const { message, sessionId = '', model } = params
   return sendSseRequest(
-    '/api/v1/ai/react-agent',
+    buildApiUrl('/v1/ai/react-agent'),
     { message, session_id: sessionId, model },
     callbacks,
   )
@@ -73,7 +72,7 @@ export const sendReactAgentMessage = (params, callbacks) => {
 export const resumeReactAgent = (params, callbacks) => {
   const { sessionId, interruptId, approved } = params
   return sendSseRequest(
-    '/api/v1/ai/react-agent/resume',
+    buildApiUrl('/v1/ai/react-agent/resume'),
     { session_id: sessionId, interrupt_id: interruptId, approved },
     callbacks,
   )

@@ -1,19 +1,14 @@
 import axios from 'axios'
 
-// 在生产环境中，API 前缀是 /api
-// 在开发环境中，我们使用 /api 但通过 Vite 代理到实际的后端
-const getBaseURL = () => {
-  if (import.meta.env.DEV) {
-    // 开发环境 - 使用相对路径，让 Vite 处理代理
-    return '/api'
-  } else {
-    // 生产环境 - Nginx 会处理 /api 前缀
-    return '/api'
-  }
+export const API_BASE_URL = '/api'
+
+export const buildApiUrl = (path) => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalizedPath}`
 }
 
 const apiClient = axios.create({
-  baseURL: getBaseURL(),
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },

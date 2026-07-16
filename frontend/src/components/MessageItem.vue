@@ -73,6 +73,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { renderMarkdown } from '../utils/markdown'
+import { escapeHtml } from '../utils/html'
 import ToolActivityPanel from './ToolActivityPanel.vue'
 import ToolApprovalInline from './ToolApprovalInline.vue'
 
@@ -136,7 +137,7 @@ const formatContent = (content) => {
     return renderMarkdown(content)
   }
 
-  return content.replace(/\n/g, '<br>').replace(/ {2}/g, '&nbsp;&nbsp;')
+  return escapeHtml(content).replace(/\n/g, '<br>').replace(/ {2}/g, '&nbsp;&nbsp;')
 }
 
 const handleCopy = async () => {
@@ -265,7 +266,7 @@ const decorateArtifactLinks = () => {
       link.className = 'artifact-link'
       // data-path 保留完整相对路径（供右侧预览定位并展示完整路径），正文仅显示文件名以免影响阅读体验
       link.setAttribute('data-path', match[0])
-      link.setAttribute('href', 'javascript:void(0)')
+      link.setAttribute('href', '#')
       link.textContent = match[0].replace(/\\/g, '/').split('/').pop() || match[0]
       fragment.appendChild(link)
       lastIndex = match.index + match[0].length
@@ -388,9 +389,8 @@ watch(
     transition: background-color 0.3s ease;
 
     .message-container {
-      max-width: 1000px;
+      width: var(--chat-content-track-width, min(100%, 880px));
       margin: 0 auto;
-      padding: 0 24px;
       display: flex;
       gap: 12px;
       justify-content: flex-end;
@@ -412,9 +412,8 @@ watch(
     transition: background-color 0.3s ease;
 
     .message-container {
-      max-width: 1000px;
+      width: var(--chat-content-track-width, min(100%, 880px));
       margin: 0 auto;
-      padding: 0 24px;
       display: flex;
       gap: 12px;
     }
@@ -433,7 +432,7 @@ watch(
     padding: 16px 0;
 
     .message-container {
-      padding: 0 16px !important;
+      width: var(--chat-content-track-width, calc(100% - 32px));
     }
   }
 }

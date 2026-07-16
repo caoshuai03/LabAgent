@@ -22,8 +22,11 @@
 
     <div v-if="chatStore.messages.length === 0" class="welcome-container">
       <div class="welcome-content">
-        <h2>你的实验助手</h2>
-        <p>我可以为您解答实验相关的问题，请把您的任务交给我吧~</p>
+        <h2>
+          <span>{{ displayedWelcomeTitle }}</span>
+          <span class="typewriter-cursor" aria-hidden="true"></span>
+        </h2>
+        <p>可以向我提问实验设计、数据分析、论文理解、代码实现等问题</p>
       </div>
     </div>
 
@@ -44,6 +47,17 @@ import ChatInput from './ChatInput.vue'
 const chatStore = useChatStore()
 const chatInputRef = ref(null)
 const isMobile = ref(false)
+const welcomeTitleIndex = ref(0)
+const displayedWelcomeTitle = ref('')
+const welcomeTitles = ['今天想研究什么？', '我可以帮你完成实验相关任务', '让我们开始一个新问题']
+let welcomeTitleTimer = 0
+let welcomeTitleCharIndex = 0
+let isDeletingWelcomeTitle = false
+
+const TYPE_DELAY = 72
+const DELETE_DELAY = 34
+const HOLD_DELAY = 1400
+const SWITCH_DELAY = 260
 
 const showMobileMenuButton = computed(() => {
   return isMobile.value && chatStore.sidebarCollapsed
@@ -51,6 +65,38 @@ const showMobileMenuButton = computed(() => {
 
 const toggleSidebar = () => {
   chatStore.toggleSidebar()
+}
+
+const scheduleWelcomeTitleTyping = (delay) => {
+  welcomeTitleTimer = window.setTimeout(updateWelcomeTitleTyping, delay)
+}
+
+const updateWelcomeTitleTyping = () => {
+  const title = welcomeTitles[welcomeTitleIndex.value]
+
+  if (!isDeletingWelcomeTitle && welcomeTitleCharIndex < title.length) {
+    welcomeTitleCharIndex += 1
+    displayedWelcomeTitle.value = title.slice(0, welcomeTitleCharIndex)
+    scheduleWelcomeTitleTyping(TYPE_DELAY)
+    return
+  }
+
+  if (!isDeletingWelcomeTitle) {
+    isDeletingWelcomeTitle = true
+    scheduleWelcomeTitleTyping(HOLD_DELAY)
+    return
+  }
+
+  if (welcomeTitleCharIndex > 0) {
+    welcomeTitleCharIndex -= 1
+    displayedWelcomeTitle.value = title.slice(0, welcomeTitleCharIndex)
+    scheduleWelcomeTitleTyping(DELETE_DELAY)
+    return
+  }
+
+  isDeletingWelcomeTitle = false
+  welcomeTitleIndex.value = (welcomeTitleIndex.value + 1) % welcomeTitles.length
+  scheduleWelcomeTitleTyping(SWITCH_DELAY)
 }
 
 const checkMobile = () => {
@@ -73,10 +119,12 @@ const handleApprovalDecision = (approved) => {
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  updateWelcomeTitleTyping()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
+  window.clearTimeout(welcomeTitleTimer)
 })
 </script>
 
@@ -89,6 +137,15 @@ onUnmounted(() => {
   min-width: 0;
   position: relative;
   overflow: hidden;
+  --chat-content-max-width: 720px;
+  --chat-content-gutter: clamp(24px, 6%, 72px);
+  --chat-content-track-width: min(
+    var(--chat-content-max-width),
+    calc(100% - (var(--chat-content-gutter) * 2))
+  );
+  background:
+    radial-gradient(circle at 56% 28%, rgba(144, 19, 139, 0.035), transparent 32%),
+    linear-gradient(180deg, #fafafc 0%, #ffffff 46%, #ffffff 100%);
 
   // 侧边栏折叠时给悬浮按钮留出空间
   .sidebar.collapsed + &,
@@ -99,26 +156,45 @@ onUnmounted(() => {
   }
 
   &.is-empty {
-    justify-content: center;
+    justify-content: flex-start;
+    padding-top: clamp(148px, 27vh, 252px);
 
     .welcome-container {
       display: flex;
       justify-content: center;
-      margin-bottom: 40px;
+      margin-bottom: 34px;
 
       .welcome-content {
         text-align: center;
         color: var(--text-secondary);
+        max-width: 640px;
+        padding: 0 24px;
 
         h2 {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 35px;
           color: var(--text-primary);
-          font-size: 24px;
-          margin-bottom: 16px;
-          font-weight: 600;
+          font-size: 28px;
+          line-height: 1.24;
+          margin-bottom: 12px;
+          font-weight: 650;
+          letter-spacing: -0.02em;
+        }
+
+        .typewriter-cursor {
+          width: 2px;
+          height: 0.92em;
+          margin-left: 3px;
+          border-radius: 999px;
+          background: var(--primary-color);
+          animation: typewriterCursorBlink 1.05s steps(2, start) infinite;
         }
 
         p {
-          font-size: 16px;
+          color: #737889;
+          font-size: 15px;
           line-height: 1.5;
         }
       }
@@ -127,6 +203,10 @@ onUnmounted(() => {
     :deep(.chat-input-container) {
       border-top: none;
       background-color: transparent;
+    }
+
+    .footer-container {
+      color: rgba(110, 110, 128, 0.52);
     }
   }
 
@@ -147,6 +227,37 @@ onUnmounted(() => {
   @media (max-width: 768px) {
     width: 100%;
     position: relative;
+    --chat-content-gutter: 16px;
+
+    &.is-empty {
+      padding-top: 120px;
+
+      .welcome-container {
+        margin-bottom: 28px;
+
+        .welcome-content {
+          h2 {
+            font-size: 24px;
+          }
+
+          p {
+            font-size: 14px;
+          }
+        }
+      }
+    }
+  }
+}
+
+@keyframes typewriterCursorBlink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+
+  46%,
+  100% {
+    opacity: 0;
   }
 }
 

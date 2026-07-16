@@ -46,11 +46,11 @@ export const knowledgeApi = {
 
   /**
    * 删除文件
+   * 后端按重复 query 参数接收 ids。
    * @param {Array<number>} ids - 文件ID数组
    * @returns {Promise} 删除结果
    */
   deleteFiles: (ids) => {
-    // Spring Boot接受List参数时，需要将数组转换为查询字符串格式
     const params = new URLSearchParams()
     ids.forEach((id) => params.append('ids', id))
     return apiClient.delete(`/v1/knowledge/delete?${params.toString()}`)
@@ -58,11 +58,11 @@ export const knowledgeApi = {
 
   /**
    * 下载文件
+   * 后端按重复 query 参数接收 ids。
    * @param {Array<number>} ids - 文件ID数组
    * @returns {Promise} 文件blob数据
    */
   downloadFiles: (ids) => {
-    // Spring Boot接受List参数时，需要将数组转换为查询字符串格式
     const params = new URLSearchParams()
     ids.forEach((id) => params.append('ids', id))
     return apiClient.get(`/v1/knowledge/download?${params.toString()}`, {

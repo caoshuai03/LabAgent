@@ -10,7 +10,7 @@
             ? '请先处理工具确认'
             : chatStore.isStreaming
               ? 'AI 正在回复...'
-              : '输入消息...'
+              : '询问实验、论文、代码或数据分析问题...'
         "
         :class="['chat-input', { 'has-scrollbar': showScrollbar }]"
         rows="1"
@@ -137,6 +137,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { cancelReactAgent, resumeReactAgent, sendReactAgentMessage } from '../api/chat'
+import { AVAILABLE_MODELS } from '../constants/models'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
 
 const chatStore = useChatStore()
@@ -152,13 +153,7 @@ const MAX_HEIGHT = 320
 const EXPAND_TRIGGER_HEIGHT = 84
 const COLLAPSE_TRIGGER_HEIGHT = 56
 
-const availableModels = [
-  { label: 'Qwen3-8B', value: 'qwen3:8b' },
-  { label: 'GPT-5.5', value: 'gpt-5.5-2026-04-24' },
-  { label: 'Ernie 4.5-300B', value: 'ernie-4.5-turbo-128k-preview' },
-  { label: 'DeepSeek V3', value: 'deepseek-v3' },
-  { label: 'DeepSeek R1', value: 'deepseek-r1' },
-]
+const availableModels = AVAILABLE_MODELS
 
 const currentModelLabel = computed(() => {
   const model = availableModels.find((item) => item.value === chatStore.selectedModel)
@@ -188,22 +183,6 @@ const closeModelDropdown = () => {
 const selectModel = (model) => {
   chatStore.setSelectedModel(model)
   closeModelDropdown()
-}
-
-const vClickOutside = {
-  mounted(el, binding) {
-    el.clickOutsideEvent = (event) => {
-      if (!(el === event.target || el.contains(event.target))) {
-        binding.value()
-      }
-    }
-    document.addEventListener('click', el.clickOutsideEvent, true)
-  },
-  unmounted(el) {
-    if (el.clickOutsideEvent) {
-      document.removeEventListener('click', el.clickOutsideEvent, true)
-    }
-  },
 }
 
 // 每个会话独立维护自己的流任务，避免切换历史会话时互相覆盖
@@ -611,14 +590,14 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .chat-input-container {
-  padding: 0 24px 0 24px;
+  padding: 0;
   background-color: var(--bg-primary);
   transition:
     background-color 0.3s ease,
     border-color 0.3s ease;
 
   .input-wrapper {
-    max-width: 952px;
+    width: var(--chat-content-track-width, min(100%, 880px));
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -657,7 +636,7 @@ onUnmounted(() => {
   }
 
   @media (max-width: 768px) {
-    padding: 0 16px 0 16px;
+    padding: 0;
 
     .input-wrapper {
       gap: 8px;
@@ -952,17 +931,19 @@ onUnmounted(() => {
     &.stop-button {
       width: 32px;
       height: 32px;
-      background-color: transparent;
-      color: var(--text-primary);
-      border: 1px solid var(--border-color);
+      background-color: var(--primary-color, #90138b);
+      color: #fff;
+      border: none;
 
       svg {
-        width: 1.2em;
-        height: 1.2em;
+        width: 1em;
+        height: 1em;
+        fill: currentColor;
+        stroke: none;
       }
 
       &:hover {
-        background-color: var(--bg-hover);
+        background-color: #9b2a96;
       }
     }
   }

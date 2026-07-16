@@ -253,6 +253,7 @@ import { knowledgeApi } from '../api/knowledge'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
 import Sidebar from '../components/Sidebar.vue'
+import { sleep } from '../utils/async'
 import UploadIcon from '../components/icons/UploadIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import TrashIcon from '../components/icons/TrashIcon.vue'
@@ -376,16 +377,8 @@ const handleFileSelect = async (event) => {
     if (response.data.code === 0) {
       showMessage(response.data.message || '文件上传成功')
       await fetchFileList()
-      // 清空文件选择
-      if (fileInput.value) {
-        fileInput.value.value = ''
-      }
     } else {
       showMessage('文件上传失败: ' + (response.data.message || '未知错误'), 'error')
-      // 业务失败也清空文件选择，避免用户误以为已上传成功
-      if (fileInput.value) {
-        fileInput.value.value = ''
-      }
     }
   } catch (error) {
     console.error('上传文件错误:', error)
@@ -403,12 +396,12 @@ const handleFileSelect = async (event) => {
     } else {
       showMessage('文件上传失败: ' + (error.message || '网络错误'), 'error')
     }
-    // 异常情况下也清空文件选择，避免重复触发 change 不生效
+  } finally {
+    uploading.value = false
+    // 上传结束后统一清空选择，避免重复选择同一文件时 change 不触发。
     if (fileInput.value) {
       fileInput.value.value = ''
     }
-  } finally {
-    uploading.value = false
   }
 }
 
@@ -550,7 +543,7 @@ const downloadFiles = async (ids) => {
           window.URL.revokeObjectURL(url)
 
           // 添加延迟避免浏览器阻止多个下载
-          await new Promise((resolve) => setTimeout(resolve, 200))
+          await sleep(200)
         }
       } catch (apiError) {
         console.error(`API下载文件 ${file.id} 失败:`, apiError)
@@ -566,7 +559,7 @@ const downloadFiles = async (ids) => {
             link.click()
             document.body.removeChild(link)
 
-            await new Promise((resolve) => setTimeout(resolve, 200))
+            await sleep(200)
           } catch (urlError) {
             console.error(`URL下载文件 ${file.id} 也失败:`, urlError)
             showMessage(`下载文件 "${file.file_name}" 失败`, 'error')

@@ -92,6 +92,8 @@ const router = useRouter()
 const route = useRoute()
 const chatStore = useChatStore()
 
+defineOptions({ name: 'AppSidebar' })
+
 const isSelectionMode = ref(false)
 const selectedIds = ref([])
 

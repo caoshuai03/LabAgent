@@ -1,18 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
-
-// HTML 转义函数
-function escapeHtml(str) {
-  if (typeof str !== 'string') return str
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  }
-  return str.replace(/[&<>"']/g, (m) => map[m])
-}
+import { escapeHtml } from './html'
 
 // 配置 markdown-it
 const md = new MarkdownIt({
@@ -27,7 +15,7 @@ const md = new MarkdownIt({
 md.linkify.set({ fuzzyLink: false, fuzzyEmail: false })
 
 // 自定义代码块渲染规则，避免 markdown-it 自动包裹 <pre>
-md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+md.renderer.rules.fence = function (tokens, idx) {
   const token = tokens[idx]
   const info = token.info ? md.utils.unescapeAll(token.info).trim() : ''
   const lang = info.split(/\s+/g)[0]
@@ -37,11 +25,12 @@ md.renderer.rules.fence = function (tokens, idx, options, env, self) {
   if (lang && hljs.getLanguage(lang)) {
     try {
       highlighted = hljs.highlight(content, { language: lang, ignoreIllegals: true }).value
-    } catch (__) {}
+    } catch {
+      highlighted = ''
+    }
   }
 
   if (!highlighted) {
-    // 使用自定义的 escapeHtml 函数
     highlighted = escapeHtml(content)
   }
 

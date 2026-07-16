@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import apiClient, { userApi } from '../api'
+import { readJsonStorage } from '../utils/storage'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || null)
-  const userInfo = ref(JSON.parse(localStorage.getItem('userInfo')) || null)
+  const userInfo = ref(readJsonStorage('userInfo'))
 
   // 验证token有效性
   const validateToken = async () => {
@@ -12,7 +13,7 @@ export const useUserStore = defineStore('user', () => {
 
     try {
       // 尝试获取用户信息来验证token有效性
-      const response = await apiClient.get('/v1/user/validate?id=' + userInfo.value.id)
+      await apiClient.get('/v1/user/validate?id=' + userInfo.value.id)
       return true
     } catch (error) {
       // 如果返回401，则token无效
@@ -41,9 +42,6 @@ export const useUserStore = defineStore('user', () => {
       // 保存token和用户信息到localStorage
       localStorage.setItem('token', data.token)
       localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
-
-      // 设置默认的Authorization头
-      apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
 
       return data
     } catch (error) {
@@ -94,7 +92,6 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
-    delete apiClient.defaults.headers.common['Authorization']
   }
 
   const isLoggedIn = () => {

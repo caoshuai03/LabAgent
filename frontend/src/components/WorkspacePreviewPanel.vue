@@ -98,6 +98,7 @@ import { useChatStore } from '../stores/chat'
 import { renderMarkdown } from '../utils/markdown'
 import { downloadWorkspaceFile, getWorkspaceFilePreview } from '../api/chat'
 import { useToast } from '../composables/useToast'
+import { escapeHtml } from '../utils/html'
 
 const chatStore = useChatStore()
 const toast = useToast()
@@ -112,20 +113,6 @@ const workspacePathOf = (path) => {
   if (!path) return '工作台'
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '')
   return `工作台 / ${normalized}`
-}
-
-const escapeHtml = (value) => {
-  if (typeof value !== 'string') return ''
-  return value.replace(/[&<>"']/g, (char) => {
-    const map = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#039;',
-    }
-    return map[char]
-  })
 }
 
 const isMarkdownTab = (tab) => (tab?.language || '').toLowerCase() === 'markdown'
@@ -390,30 +377,31 @@ watch(
   :deep(h4),
   :deep(h5),
   :deep(h6) {
-    margin: 1.45em 0 0.65em;
+    margin: 0.8em 0 0.4em 0;
     color: #202124;
-    font-weight: 700;
-    line-height: 1.28;
-    letter-spacing: -0.02em;
+    font-weight: 600;
+
+    &:first-child {
+      margin-top: 0;
+    }
   }
 
   :deep(h1) {
-    margin-top: 0;
-    font-size: 27px;
+    font-size: 20px;
   }
 
   :deep(h2) {
-    font-size: 22px;
+    font-size: 17px;
   }
 
   :deep(h3) {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   :deep(h4),
   :deep(h5),
   :deep(h6) {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   :deep(p) {
@@ -595,14 +583,6 @@ watch(
   .preview-body {
     padding: 22px 20px 36px;
     font-size: 14px;
-
-    :deep(h1) {
-      font-size: 24px;
-    }
-
-    :deep(h2) {
-      font-size: 20px;
-    }
   }
 
   .preview-code {

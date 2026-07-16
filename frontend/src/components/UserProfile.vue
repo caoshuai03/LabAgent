@@ -72,11 +72,6 @@ const displayName = computed(() => {
   return userStore.userInfo?.name || userStore.userInfo?.userName || '用户'
 })
 
-const userInitial = computed(() => {
-  const name = displayName.value
-  return name.charAt(0).toUpperCase()
-})
-
 const toggleDropdown = () => {
   showDropdown.value = !showDropdown.value
 }
@@ -126,22 +121,6 @@ const modalActions = {
 const handleMenuClick = (action) => {
   closeDropdown()
   modalActions[action]?.()
-}
-
-const vClickOutside = {
-  mounted(el, binding) {
-    el.clickOutsideEvent = (event) => {
-      if (!(el === event.target || el.contains(event.target))) {
-        binding.value()
-      }
-    }
-    document.addEventListener('click', el.clickOutsideEvent, true)
-  },
-  unmounted(el) {
-    if (el.clickOutsideEvent) {
-      document.removeEventListener('click', el.clickOutsideEvent, true)
-    }
-  },
 }
 </script>
 
