@@ -42,6 +42,51 @@
         </button>
 
         <div class="input-actions">
+          <div class="input-model-selector" v-click-outside="closeModelDropdown">
+            <button
+              type="button"
+              class="model-selector-button"
+              :class="{ disabled: chatStore.isStreaming || chatStore.awaitingApproval }"
+              :disabled="chatStore.isStreaming || chatStore.awaitingApproval"
+              @click="toggleModelDropdown"
+            >
+              <span>{{ currentModelLabel }}</span>
+              <ChevronDownIcon
+                :size="14"
+                class="model-selector-icon"
+                :class="{ 'is-open': showModelDropdown }"
+              />
+            </button>
+
+            <transition name="model-dropdown-fade">
+              <div v-show="showModelDropdown" class="model-dropdown-menu">
+                <button
+                  v-for="model in availableModels"
+                  :key="model.value"
+                  type="button"
+                  class="model-option"
+                  :class="{ active: chatStore.selectedModel === model.value }"
+                  @click="selectModel(model.value)"
+                >
+                  <span class="model-option-label">{{ model.label }}</span>
+                  <svg
+                    v-if="chatStore.selectedModel === model.value"
+                    class="model-option-check"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </transition>
+          </div>
+
           <button
             v-if="chatStore.isStreaming"
             class="action-button stop-button"
@@ -92,6 +137,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { cancelReactAgent, resumeReactAgent, sendReactAgentMessage } from '../api/chat'
+import ChevronDownIcon from './icons/ChevronDownIcon.vue'
 
 const chatStore = useChatStore()
 
@@ -99,11 +145,25 @@ const inputText = ref('')
 const inputRef = ref(null)
 const showScrollbar = ref(false)
 const isExpanded = ref(false)
+const showModelDropdown = ref(false)
 
 const MIN_HEIGHT = 24
 const MAX_HEIGHT = 320
 const EXPAND_TRIGGER_HEIGHT = 84
 const COLLAPSE_TRIGGER_HEIGHT = 56
+
+const availableModels = [
+  { label: 'Qwen3-8B', value: 'qwen3:8b' },
+  { label: 'GPT-5.5', value: 'gpt-5.5-2026-04-24' },
+  { label: 'Ernie 4.5-300B', value: 'ernie-4.5-turbo-128k-preview' },
+  { label: 'DeepSeek V3', value: 'deepseek-v3' },
+  { label: 'DeepSeek R1', value: 'deepseek-r1' },
+]
+
+const currentModelLabel = computed(() => {
+  const model = availableModels.find((item) => item.value === chatStore.selectedModel)
+  return model ? model.label : chatStore.selectedModel
+})
 
 // 将同一帧内的多次高度刷新合并，避免输入过程中出现抖动
 let inputVisualSyncFrameId = 0
@@ -115,6 +175,36 @@ const canSend = computed(() => {
     !chatStore.awaitingApproval
   )
 })
+
+const toggleModelDropdown = () => {
+  if (chatStore.isStreaming || chatStore.awaitingApproval) return
+  showModelDropdown.value = !showModelDropdown.value
+}
+
+const closeModelDropdown = () => {
+  showModelDropdown.value = false
+}
+
+const selectModel = (model) => {
+  chatStore.setSelectedModel(model)
+  closeModelDropdown()
+}
+
+const vClickOutside = {
+  mounted(el, binding) {
+    el.clickOutsideEvent = (event) => {
+      if (!(el === event.target || el.contains(event.target))) {
+        binding.value()
+      }
+    }
+    document.addEventListener('click', el.clickOutsideEvent, true)
+  },
+  unmounted(el) {
+    if (el.clickOutsideEvent) {
+      document.removeEventListener('click', el.clickOutsideEvent, true)
+    }
+  },
+}
 
 // 每个会话独立维护自己的流任务，避免切换历史会话时互相覆盖
 const streamTasks = new Map()
@@ -322,6 +412,8 @@ const handleKeyDown = (event) => {
 const handleSend = async () => {
   if (!canSend.value) return
 
+  closeModelDropdown()
+
   const message = inputText.value.trim()
   if (!message) return
 
@@ -488,6 +580,15 @@ watch(inputText, () => {
   })
 })
 
+watch(
+  () => [chatStore.isStreaming, chatStore.awaitingApproval],
+  ([isStreaming, awaitingApproval]) => {
+    if (isStreaming || awaitingApproval) {
+      closeModelDropdown()
+    }
+  },
+)
+
 onMounted(() => {
   resetInputVisualState()
 })
@@ -524,7 +625,7 @@ onUnmounted(() => {
     gap: 10px;
     align-items: stretch;
     position: relative;
-    overflow: hidden;
+    overflow: visible;
     background: linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.98) 0%,
@@ -679,6 +780,141 @@ onUnmounted(() => {
   gap: 6px;
   flex-shrink: 0;
 
+  .input-model-selector {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .model-selector-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 150px;
+    height: 32px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary, #626262);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+
+    &:hover:not(.disabled) {
+      background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+      color: var(--text-primary, #242424);
+    }
+
+    &.disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .model-selector-icon {
+    flex-shrink: 0;
+    color: currentColor;
+    transition: transform 0.2s ease;
+
+    &.is-open {
+      transform: rotate(180deg);
+    }
+  }
+
+  .model-dropdown-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 10px);
+    width: 220px;
+    max-height: min(280px, calc(100vh - 180px));
+    padding: 6px;
+    border: 1px solid rgba(229, 231, 235, 0.95);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow:
+      0 18px 42px rgba(17, 24, 39, 0.14),
+      0 1px 0 rgba(255, 255, 255, 0.9) inset;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    overflow-y: auto;
+    z-index: 1200;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.16);
+      border-radius: 999px;
+    }
+  }
+
+  .model-option {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 16px;
+    column-gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-primary, #353740);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.16s ease;
+
+    &:hover {
+      background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+    }
+
+    &.active {
+      background: rgba(0, 0, 0, 0.08);
+    }
+  }
+
+  .model-option-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .model-option-check {
+    width: 14px;
+    height: 14px;
+    color: var(--primary-color, #90138b);
+    justify-self: end;
+  }
+
+  .model-dropdown-fade-enter-active,
+  .model-dropdown-fade-leave-active {
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease;
+  }
+
+  .model-dropdown-fade-enter-from,
+  .model-dropdown-fade-leave-to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+
   .action-button {
     display: flex;
     align-items: center;
@@ -728,6 +964,18 @@ onUnmounted(() => {
       &:hover {
         background-color: var(--bg-hover);
       }
+    }
+  }
+
+  @media (max-width: 768px) {
+    .model-selector-button {
+      max-width: 118px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+
+    .model-dropdown-menu {
+      width: 200px;
     }
   }
 }

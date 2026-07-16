@@ -4,6 +4,7 @@ import { getUserSessions, getSessionHistory, deleteSession, deleteSessions } fro
 
 const CURRENT_CONVERSATION_STORAGE_KEY = 'chat_current_conversation_id'
 const DRAFT_CONVERSATION_PREFIX = '__draft_conversation__'
+const DEFAULT_MODEL = 'qwen3:8b'
 
 export const useChatStore = defineStore('chat', () => {
   // 会话列表
@@ -25,9 +26,6 @@ export const useChatStore = defineStore('chat', () => {
   // 是否需要聚焦输入框
   const shouldFocusInput = ref(false)
 
-  // 当前选中的大模型
-  const selectedModel = ref('qwen3:8b')
-
   // 侧栏宽度（像素），由正文/侧栏之间的分隔条拖拽调节
   const PREVIEW_PANEL_MIN_WIDTH = 320
   const PREVIEW_PANEL_MAX_WIDTH = 900
@@ -48,6 +46,7 @@ export const useChatStore = defineStore('chat', () => {
     previewPanelOpen: false,
     previewTabs: [],
     previewActivePath: '',
+    selectedModel: DEFAULT_MODEL,
   })
 
   const generateDraftConversationKey = () => {
@@ -62,7 +61,7 @@ export const useChatStore = defineStore('chat', () => {
     return typeof conversationKey === 'string' && conversationKey.startsWith(DRAFT_CONVERSATION_PREFIX)
   }
 
-  const ensureConversationPreviewState = (state) => {
+  const ensureConversationDisplayState = (state) => {
     if (!state) return null
     if (typeof state.previewPanelOpen !== 'boolean') {
       state.previewPanelOpen = false
@@ -73,6 +72,9 @@ export const useChatStore = defineStore('chat', () => {
     if (typeof state.previewActivePath !== 'string') {
       state.previewActivePath = ''
     }
+    if (typeof state.selectedModel !== 'string' || !state.selectedModel) {
+      state.selectedModel = DEFAULT_MODEL
+    }
     return state
   }
 
@@ -82,7 +84,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!conversationStates.value[conversationKey]) {
       conversationStates.value[conversationKey] = createConversationState()
     } else {
-      ensureConversationPreviewState(conversationStates.value[conversationKey])
+      ensureConversationDisplayState(conversationStates.value[conversationKey])
     }
 
     return conversationStates.value[conversationKey]
@@ -148,6 +150,10 @@ export const useChatStore = defineStore('chat', () => {
     return getConversationState(activeConversationKey.value)?.previewActivePath || ''
   })
 
+  const selectedModel = computed(() => {
+    return getConversationState(activeConversationKey.value)?.selectedModel || DEFAULT_MODEL
+  })
+
   // 当前会话的「产物路径集合」：所有 write_file 工具调用的目标路径，
   // 供正文渲染判定「哪些路径可点击预览」（等价于产物注册，无需新建表）
   const artifactPaths = computed(() => {
@@ -187,6 +193,15 @@ export const useChatStore = defineStore('chat', () => {
   const currentConversation = computed(() => {
     return conversations.value.find((conv) => conv.id === currentConversationId.value)
   })
+
+  const setSelectedModel = (model, conversationKey = activeConversationKey.value) => {
+    if (!model) return
+
+    const state = ensureConversationState(conversationKey)
+    if (state) {
+      state.selectedModel = model
+    }
+  }
 
   /**
    * 打开工作区文件预览（正文超链接点击触发）
@@ -736,6 +751,7 @@ export const useChatStore = defineStore('chat', () => {
     shouldFocusInput,
     isNewConversation,
     selectedModel,
+    setSelectedModel,
     currentConversation,
     previewPanelOpen,
     previewTabs,

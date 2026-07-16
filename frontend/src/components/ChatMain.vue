@@ -4,46 +4,15 @@
     :class="{ 'is-empty': chatStore.messages.length === 0 }"
     @click="handleMainClick"
   >
-    <!-- 顶部模型选择区域 -->
-    <div class="top-bar">
+    <!-- 移动端顶部菜单入口 -->
+    <div v-if="showMobileMenuButton" class="top-bar">
       <button
-        v-if="showMobileMenuButton"
         @click.stop="toggleSidebar"
         class="mobile-menu-button"
         v-tooltip="'打开菜单'"
       >
         ☰
       </button>
-
-      <!-- 大模型选择下拉框 -->
-      <div class="model-selector-container" v-click-outside="closeModelDropdown">
-        <div
-          class="model-selector-trigger"
-          :class="{ disabled: chatStore.isStreaming }"
-          @click="toggleModelDropdown"
-        >
-          <span class="model-label">{{ currentModelLabel }}</span>
-          <ChevronDownIcon
-            :size="16"
-            class="dropdown-icon"
-            :class="{ 'is-open': showModelDropdown }"
-          />
-        </div>
-
-        <transition name="dropdown-fade">
-          <div v-show="showModelDropdown" class="model-dropdown-menu">
-            <div
-              v-for="model in availableModels"
-              :key="model.value"
-              class="model-option"
-              :class="{ active: chatStore.selectedModel === model.value }"
-              @click="selectModel(model.value)"
-            >
-              {{ model.label }}
-            </div>
-          </div>
-        </transition>
-      </div>
     </div>
 
     <MessageList
@@ -71,29 +40,13 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import MessageList from './MessageList.vue'
 import ChatInput from './ChatInput.vue'
-import ChevronDownIcon from './icons/ChevronDownIcon.vue'
 
 const chatStore = useChatStore()
 const chatInputRef = ref(null)
 const isMobile = ref(false)
-const showModelDropdown = ref(false)
-
-// 可用模型列表
-const availableModels = ref([
-  { label: 'Qwen3-8B', value: 'qwen3:8b' },
-  { label: 'GPT-5.5', value: 'gpt-5.5-2026-04-24' },
-  { label: 'Ernie 4.5-300B', value: 'ernie-4.5-turbo-128k-preview' },
-  { label: 'DeepSeek V3', value: 'deepseek-v3' },
-  { label: 'DeepSeek R1', value: 'deepseek-r1' },
-])
 
 const showMobileMenuButton = computed(() => {
   return isMobile.value && chatStore.sidebarCollapsed
-})
-
-const currentModelLabel = computed(() => {
-  const model = availableModels.value.find((m) => m.value === chatStore.selectedModel)
-  return model ? model.label : chatStore.selectedModel
 })
 
 const toggleSidebar = () => {
@@ -113,39 +66,8 @@ const handleMainClick = () => {
   }
 }
 
-const toggleModelDropdown = () => {
-  if (!chatStore.isStreaming) {
-    showModelDropdown.value = !showModelDropdown.value
-  }
-}
-
-const closeModelDropdown = () => {
-  showModelDropdown.value = false
-}
-
-const selectModel = (value) => {
-  chatStore.selectedModel = value
-  closeModelDropdown()
-}
-
 const handleApprovalDecision = (approved) => {
   chatInputRef.value?.handleApprovalDecision(approved)
-}
-
-const vClickOutside = {
-  mounted(el, binding) {
-    el.clickOutsideEvent = (event) => {
-      if (!(el === event.target || el.contains(event.target))) {
-        binding.value()
-      }
-    }
-    document.addEventListener('click', el.clickOutsideEvent, true)
-  },
-  unmounted(el) {
-    if (el.clickOutsideEvent) {
-      document.removeEventListener('click', el.clickOutsideEvent, true)
-    }
-  },
 }
 
 onMounted(() => {
@@ -166,15 +88,6 @@ onUnmounted(() => {
   height: 100vh;
   min-width: 0;
   position: relative;
-  overflow: hidden;
-
-  // 侧边栏折叠时给悬浮按钮留出空间
-  .sidebar.collapsed + &,
-  .sidebar.collapsed ~ & {
-    .top-bar {
-      padding-left: 60px;
-    }
-  }
   overflow: hidden;
 
   // 侧边栏折叠时给悬浮按钮留出空间
@@ -249,12 +162,8 @@ onUnmounted(() => {
   z-index: 100;
   pointer-events: none;
 
-  .mobile-menu-button,
-  .model-selector-container {
-    pointer-events: auto;
-  }
-
   .mobile-menu-button {
+    pointer-events: auto;
     width: 32px;
     height: 32px;
     background-color: var(--bg-primary);
@@ -279,108 +188,12 @@ onUnmounted(() => {
     }
   }
 
-  .model-selector-container {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .model-selector-trigger {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background-color 0.2s ease;
-
-    &:hover:not(.disabled) {
-      background-color: rgba(0, 0, 0, 0.05);
-    }
-
-    &.disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .model-label {
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    .dropdown-icon {
-      color: var(--text-secondary);
-      transition: transform 0.2s ease;
-
-      &.is-open {
-        transform: rotate(180deg);
-      }
-    }
-  }
-
-  .model-dropdown-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 8px; // 增加间距
-    background-color: var(--bg-primary);
-    border-radius: 12px; // 更圆润的边角，与对话记录一致
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); // 统一的阴影效果
-    padding: 6px; // 稍微增加内边距
-    min-width: 160px;
-    z-index: 1000;
-    border: 1px solid var(--border-color); // 添加边框
-
-    .model-option {
-      padding: 10px 12px; // 与对话记录一致的padding
-      border-radius: 8px; // 更圆润的选项边角
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 14px;
-      color: var(--text-primary);
-      transition: background-color 0.2s ease;
-      margin-bottom: 2px; // 选项之间的间距
-
-      &:last-child {
-        margin-bottom: 0; // 最后一个选项去掉间距
-      }
-
-      &:hover {
-        background-color: var(--bg-hover);
-      }
-
-      &.active {
-        background-color: var(--bg-active); // 使用active背景色
-        font-weight: 500;
-      }
-    }
-  }
-
-  // 动画
-  .dropdown-fade-enter-active,
-  .dropdown-fade-leave-active {
-    transition: all 0.2s ease;
-  }
-
-  .dropdown-fade-enter-from,
-  .dropdown-fade-leave-to {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-
   @media (max-width: 768px) {
     position: relative;
     top: 0;
     left: 0;
     padding: 12px 16px;
     pointer-events: auto;
-
-    .model-selector-trigger .model-label {
-      font-size: 16px;
-    }
   }
 }
 </style>
