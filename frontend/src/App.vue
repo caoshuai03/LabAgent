@@ -111,6 +111,7 @@ body {
   --bg-primary: #ffffff;
   --bg-secondary: #f7f7f8;
   --bg-tertiary: #f9f9f9;
+  --app-page-bg: #fafafc;
   /* 历史会话与通用卡片的灰色悬浮/选中背景 */
   --bg-hover: #e5e5e5;
   --bg-active: #ebebeb;

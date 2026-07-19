@@ -52,6 +52,9 @@ def result_envelope(
     output: str = "",
     summary: str = "",
     error: str | None = None,
+    error_type: str | None = None,
+    status: str | None = None,
+    internal: bool = False,
     duration_ms: int | None = None,
     preview_path: str | None = None,
     preview_language: str | None = None,
@@ -59,6 +62,10 @@ def result_envelope(
 ) -> str:
     """构造给 ToolMessage/模型的结构化 JSON 结果。
 
+    error_type 为可选的失败分类（如 timeout/permission/invalid_argument/exception），
+    供模型判断应重试还是换路；成功时不传。
+    status 用于需要保留 rejected/cancelled 等精确状态的受控结果。
+    internal 标记仅供后端审计和模型自修正、无需下发前端的内部结果。
     preview_* 为可选的产物预览字段（当前仅 write_file 使用），
     其余工具不传时不会出现在结果里，对既有契约零影响。
     """
@@ -69,6 +76,12 @@ def result_envelope(
         "error": truncate_text(str(redact_value(error)), 500) if error else None,
         "duration_ms": duration_ms,
     }
+    if error_type is not None:
+        payload["error_type"] = error_type
+    if status is not None:
+        payload["status"] = status
+    if internal:
+        payload["internal"] = True
     if preview_path is not None:
         payload["preview_path"] = preview_path
     if preview_language is not None:

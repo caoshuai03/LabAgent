@@ -143,9 +143,7 @@ onUnmounted(() => {
     var(--chat-content-max-width),
     calc(100% - (var(--chat-content-gutter) * 2))
   );
-  background:
-    radial-gradient(circle at 56% 28%, rgba(144, 19, 139, 0.035), transparent 32%),
-    linear-gradient(180deg, #fafafc 0%, #ffffff 46%, #ffffff 100%);
+  background-color: var(--app-page-bg);
 
   // 侧边栏折叠时给悬浮按钮留出空间
   .sidebar.collapsed + &,

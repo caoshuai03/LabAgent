@@ -23,12 +23,6 @@
           </button>
         </div>
       </form>
-      <div v-if="errorMessage" class="error-message">
-        {{ errorMessage }}
-      </div>
-      <div v-if="successMessage" class="success-message">
-        {{ successMessage }}
-      </div>
     </div>
   </div>
 </template>
@@ -37,13 +31,13 @@
 import { ref, onMounted } from 'vue'
 import { useUserStore } from '../stores/user'
 import apiClient from '../api'
+import { useToast } from '../composables/useToast'
 
 const emit = defineEmits(['close'])
 
 const userStore = useUserStore()
+const toast = useToast()
 const updating = ref(false)
-const errorMessage = ref('')
-const successMessage = ref('')
 const form = ref({
   id: null,
   name: '',
@@ -76,22 +70,20 @@ const handleClose = () => {
 
 const handleSubmit = async () => {
   updating.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
 
   try {
     const result = await userStore.updateUserInfo(form.value)
 
     if (result !== undefined) {
-      successMessage.value = '用户信息更新成功！'
+      toast.success('用户信息更新成功')
       setTimeout(() => {
         handleClose()
       }, 2000)
     } else {
-      errorMessage.value = '更新失败，请稍后重试'
+      toast.error('更新失败，请稍后重试')
     }
   } catch (error) {
-    errorMessage.value = error.message || '更新失败'
+    toast.error(error.message || '更新失败')
   } finally {
     updating.value = false
   }
@@ -207,26 +199,6 @@ const handleSubmit = async () => {
         }
       }
     }
-  }
-
-  .error-message {
-    color: #f8d7da;
-    text-align: center;
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border-radius: 4px;
-    background-color: rgba(220, 53, 69, 0.2);
-    border: 1px solid rgba(220, 53, 69, 0.5);
-  }
-
-  .success-message {
-    color: #d4edda;
-    text-align: center;
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border-radius: 4px;
-    background-color: rgba(40, 167, 69, 0.2);
-    border: 1px solid rgba(40, 167, 69, 0.5);
   }
 }
 </style>

@@ -62,9 +62,9 @@
           <button
             type="button"
             class="activity-row"
-            :class="[`status-${activity.status}`, { expandable: isShell(activity) || canPreviewFile(activity) }]"
-            :disabled="!isShell(activity) && !canPreviewFile(activity)"
-            :aria-expanded="isShell(activity) || canPreviewFile(activity) ? isExpanded(activity.id) : undefined"
+            :class="[`status-${activity.status}`, { expandable: isShell(activity) }]"
+            :disabled="!isShell(activity)"
+            :aria-expanded="isShell(activity) ? isExpanded(activity.id) : undefined"
             @click="toggleActivity(activity)"
           >
             <span class="activity-item-icon" aria-hidden="true">
@@ -95,14 +95,11 @@
               </svg>
             </span>
             <span class="activity-status-label">{{ getStatusLabel(activity) }}</span>
-            <span
-              class="activity-primary-text"
-              :title="getPrimaryText(activity)"
-            >
+            <span class="activity-primary-text" :title="getPrimaryText(activity)">
               {{ getPrimaryText(activity) }}
             </span>
             <svg
-              v-if="isShell(activity) || canPreviewFile(activity)"
+              v-if="isShell(activity)"
               class="item-chevron"
               :class="{ expanded: isExpanded(activity.id) }"
               viewBox="0 0 24 24"
@@ -123,39 +120,35 @@
           <pre>{{ getShellDetail(activity) }}</pre>
         </div>
 
-        <div v-if="canPreviewFile(activity) && isExpanded(activity.id)" class="file-preview">
-          <div class="file-preview-title">{{ filePathOf(activity) }}</div>
-          <div v-if="isPreviewLoading(activity.id)" class="file-preview-loading">正在加载预览…</div>
-          <div v-else class="file-preview-body markdown-body" v-html="renderedPreviewHtml(activity)"></div>
-        </div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { renderMarkdown } from '../utils/markdown'
-import { getWorkspaceFilePreview } from '../api/chat'
-import { useToast } from '../composables/useToast'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   toolEvents: {
     type: Array,
     default: () => [],
   },
-  sessionId: {
-    type: String,
-    default: '',
+  completed: {
+    type: Boolean,
+    default: false,
   },
 })
 
-const toast = useToast()
 const READ_TOOL_NAMES = new Set(['list_directory', 'read_file', 'file_search'])
-const groupExpanded = ref(true)
+const groupExpanded = ref(!props.completed)
 const expandedToolCallIds = ref(new Set())
-// 按 activity.id 缓存按需拉取的预览内容
-const fetchedPreviews = ref({})
+
+watch(
+  () => props.completed,
+  (completed) => {
+    if (completed) groupExpanded.value = false
+  },
+)
 
 const statusFromStage = (stage, success) => {
   const statusMap = {
@@ -187,8 +180,6 @@ const ensureActivity = (list, activeCalls, payload, index) => {
       errorMessage: '',
       durationMs: null,
       previewPath: '',
-      previewLanguage: '',
-      previewContent: '',
     }
     activeCalls.set(callId, activity)
     list.push(activity)
@@ -218,8 +209,6 @@ const activities = computed(() => {
       activity.errorMessage = payload.error_message || ''
       activity.durationMs = payload.duration_ms ?? null
       if (payload.preview_path) activity.previewPath = payload.preview_path
-      if (payload.preview_language) activity.previewLanguage = payload.preview_language
-      if (payload.preview_content !== undefined) activity.previewContent = payload.preview_content || ''
       return
     }
 
@@ -265,10 +254,6 @@ const activities = computed(() => {
 
 const isShell = (activity) => activity.toolName === 'execute_shell'
 const isReadActivity = (activity) => READ_TOOL_NAMES.has(activity.toolName)
-const isWriteFile = (activity) => activity.toolName === 'write_file'
-// 写文件成功且拿到路径时，可提供预览/下载入口
-const canPreviewFile = (activity) =>
-  isWriteFile(activity) && activity.status === 'success' && !!filePathOf(activity)
 
 const filePathOf = (activity) => activity.previewPath || activity.arguments?.file_path || ''
 
@@ -289,6 +274,10 @@ const groupTitle = computed(() => {
   const shellActivities = activities.value.filter(isShell)
   const readActivities = activities.value.filter(isReadActivity)
   const allStatuses = activities.value.map((activity) => activity.status)
+  const hasSuccessfulActivity = allStatuses.includes('success')
+  const hasUnexecutedActivity = allStatuses.some((status) =>
+    ['rejected', 'cancelled'].includes(status),
+  )
   const shellCommandCount = shellActivities.reduce(
     (total, activity) => total + Math.max(normalizeCommands(activity).length, 1),
     0,
@@ -307,14 +296,20 @@ const groupTitle = computed(() => {
     return shellActivities.length ? '命令执行超时' : '工具执行超时'
   }
   if (allStatuses.includes('failed')) {
-    const hasSuccess = allStatuses.includes('success')
-    if (hasSuccess) return '部分工具执行失败'
+    if (hasSuccessfulActivity) return '部分工具执行失败'
     if (shellActivities.length) return '命令执行失败'
     if (readActivities.length) return '文件查看失败'
     return '工具执行失败'
   }
-  if (allStatuses.includes('rejected')) {
-    return shellActivities.length ? '已拒绝运行命令' : '已拒绝工具操作'
+  if (hasUnexecutedActivity) {
+    if (hasSuccessfulActivity) return '运行了多个命令'
+    const allUnexecuted = allStatuses.every((status) => ['rejected', 'cancelled'].includes(status))
+    if (allUnexecuted) {
+      return shellActivities.length === activities.value.length
+        ? '已拒绝运行命令'
+        : '已拒绝工具操作'
+    }
+    return '部分工具操作未执行'
   }
 
   const shellTitle = shellCommandCount > 1 ? '运行了多个命令' : '运行了命令'
@@ -408,16 +403,11 @@ const getPrimaryText = (activity) => {
 const isExpanded = (callId) => expandedToolCallIds.value.has(callId)
 
 const toggleActivity = (activity) => {
-  if (isShell(activity)) {
-    const next = new Set(expandedToolCallIds.value)
-    if (next.has(activity.id)) next.delete(activity.id)
-    else next.add(activity.id)
-    expandedToolCallIds.value = next
-    return
-  }
-  if (canPreviewFile(activity)) {
-    togglePreview(activity)
-  }
+  if (!isShell(activity)) return
+  const next = new Set(expandedToolCallIds.value)
+  if (next.has(activity.id)) next.delete(activity.id)
+  else next.add(activity.id)
+  expandedToolCallIds.value = next
 }
 
 const getShellDetail = (activity) => {
@@ -433,69 +423,6 @@ const getShellDetail = (activity) => {
     .map((command) => `$ ${command}`)
     .join('\n')
   return `${commands}\n等待命令执行结果`.trim()
-}
-
-// ---- write_file 整文件预览与下载（非 diff）----
-
-const previewLoading = ref(new Set())
-
-const isPreviewLoading = (callId) => previewLoading.value.has(callId)
-
-const previewOf = (activity) => {
-  const fetched = fetchedPreviews.value[activity.id]
-  if (fetched !== undefined) return { content: fetched.content, language: fetched.language }
-  return { content: activity.previewContent, language: activity.previewLanguage || 'text' }
-}
-
-const togglePreview = async (activity) => {
-  const next = new Set(expandedToolCallIds.value)
-  if (next.has(activity.id)) {
-    next.delete(activity.id)
-    expandedToolCallIds.value = next
-    return
-  }
-  next.add(activity.id)
-  expandedToolCallIds.value = next
-  // SSE 已带整文件正文时直接用；否则按需拉接口（例如历史消息重放）
-  if (activity.previewContent || fetchedPreviews.value[activity.id] !== undefined) return
-  await fetchPreview(activity)
-}
-
-const fetchPreview = async (activity) => {
-  const path = filePathOf(activity)
-  if (!path || !props.sessionId) {
-    toast.error('缺少会话或文件路径，无法预览')
-    return
-  }
-  const loading = new Set(previewLoading.value)
-  loading.add(activity.id)
-  previewLoading.value = loading
-  try {
-    const response = await getWorkspaceFilePreview(props.sessionId, path)
-    const data = response.data?.data
-    if (data) {
-      fetchedPreviews.value = {
-        ...fetchedPreviews.value,
-        [activity.id]: { content: data.content || '', language: data.language || 'text' },
-      }
-    } else {
-      toast.error(response.data?.message || '预览失败')
-    }
-  } catch (error) {
-    toast.error(error.response?.data?.message || '预览失败，请尝试下载')
-  } finally {
-    const done = new Set(previewLoading.value)
-    done.delete(activity.id)
-    previewLoading.value = done
-  }
-}
-
-// 整文件预览渲染：Markdown 直接渲染富文本，其余按语言走代码块高亮（非 diff）
-const renderedPreviewHtml = (activity) => {
-  const { content, language } = previewOf(activity)
-  if (language === 'markdown') return renderMarkdown(content)
-  const fence = language && language !== 'text' ? language : ''
-  return renderMarkdown(`\`\`\`${fence}\n${content}\n\`\`\``)
 }
 </script>
 
@@ -547,7 +474,7 @@ const renderedPreviewHtml = (activity) => {
 .activity-group-title {
   min-width: 0;
   color: var(--text-tertiary, #747682);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
 }
@@ -581,54 +508,6 @@ const renderedPreviewHtml = (activity) => {
 .activity-line .activity-row {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.file-preview {
-  margin: 4px 0 8px;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #dedede);
-  border-radius: 10px;
-  background: var(--bg-secondary, #f5f5f5);
-}
-
-.file-preview-title {
-  padding: 8px 12px 5px;
-  color: var(--text-secondary, #626262);
-  font-size: 13px;
-  font-weight: 600;
-  word-break: break-all;
-}
-
-.file-preview-loading {
-  padding: 6px 12px 12px;
-  color: var(--text-tertiary, #8a8a8a);
-  font-size: 13px;
-}
-
-.file-preview-body {
-  max-height: 420px;
-  padding: 0 12px 12px;
-  overflow: auto;
-  font-size: 13px;
-  line-height: 1.55;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-
-  :deep(.code-block-wrapper) {
-    margin: 0.5em 0;
-    border-radius: 10px;
-    overflow: hidden;
-  }
-
-  :deep(.code-block-wrapper pre) {
-    margin: 0;
-    padding: 10px 14px;
-    overflow-x: auto;
-  }
-
-  :deep(pre) {
-    max-width: 100%;
-  }
 }
 
 .activity-row {
@@ -679,9 +558,10 @@ const renderedPreviewHtml = (activity) => {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary, #666);
+  color: currentColor;
   font-family: inherit;
   font-size: 13px;
+  font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;

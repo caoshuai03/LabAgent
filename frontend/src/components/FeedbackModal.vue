@@ -89,6 +89,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { feedbackApi } from '../api/feedback'
+import { useToast } from '../composables/useToast'
 
 const props = defineProps({
   messageContent: {
@@ -106,6 +107,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'success'])
+const toast = useToast()
 
 const feedbackTypes = [
   { value: 1, label: 'BUG' },
@@ -148,13 +150,13 @@ const handleSubmit = async () => {
     if (response.data && response.data.code === 0) {
       emit('success')
       emit('close')
-      alert('反馈提交成功，感谢你的反馈。')
+      toast.success('反馈提交成功，感谢你的反馈。')
     } else {
-      alert(response.data?.message || '提交失败，请稍后重试')
+      toast.error(response.data?.message || '提交失败，请稍后重试')
     }
   } catch (error) {
     console.error('提交反馈失败:', error)
-    alert('提交失败，请稍后重试')
+    toast.error('提交失败，请稍后重试')
   } finally {
     submitting.value = false
   }
@@ -282,7 +284,9 @@ const handleSubmit = async () => {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 
   &:focus {
     outline: none;

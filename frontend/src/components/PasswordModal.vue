@@ -37,12 +37,6 @@
           </button>
         </div>
       </form>
-      <div v-if="errorMessage" class="error-message">
-        {{ errorMessage }}
-      </div>
-      <div v-if="successMessage" class="success-message">
-        {{ successMessage }}
-      </div>
     </div>
   </div>
 </template>
@@ -50,13 +44,13 @@
 <script setup>
 import { ref } from 'vue'
 import { useUserStore } from '../stores/user'
+import { useToast } from '../composables/useToast'
 
 const emit = defineEmits(['close'])
 
 const userStore = useUserStore()
+const toast = useToast()
 const changing = ref(false)
-const errorMessage = ref('')
-const successMessage = ref('')
 const form = ref({
   currentPassword: '',
   newPassword: '',
@@ -71,36 +65,32 @@ const handleClose = () => {
     newPassword: '',
     confirmNewPassword: '',
   }
-  errorMessage.value = ''
-  successMessage.value = ''
 }
 
 const handleSubmit = async () => {
   changing.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
 
   // 基本验证
   if (!form.value.currentPassword) {
-    errorMessage.value = '请输入当前密码'
+    toast.warning('请输入当前密码')
     changing.value = false
     return
   }
 
   if (!form.value.newPassword) {
-    errorMessage.value = '请输入新密码'
+    toast.warning('请输入新密码')
     changing.value = false
     return
   }
 
   if (form.value.newPassword.length < 6) {
-    errorMessage.value = '新密码长度不能少于6位'
+    toast.warning('新密码长度不能少于6位')
     changing.value = false
     return
   }
 
   if (form.value.newPassword !== form.value.confirmNewPassword) {
-    errorMessage.value = '两次输入的新密码不一致'
+    toast.warning('两次输入的新密码不一致')
     changing.value = false
     return
   }
@@ -109,15 +99,15 @@ const handleSubmit = async () => {
     const result = await userStore.changePassword(form.value)
 
     if (result !== undefined) {
-      successMessage.value = '密码修改成功！'
+      toast.success('密码修改成功')
       setTimeout(() => {
         handleClose()
       }, 2000)
     } else {
-      errorMessage.value = '密码修改失败，请稍后重试'
+      toast.error('密码修改失败，请稍后重试')
     }
   } catch (error) {
-    errorMessage.value = error.message || '密码修改失败'
+    toast.error(error.message || '密码修改失败')
   } finally {
     changing.value = false
   }
@@ -233,28 +223,6 @@ const handleSubmit = async () => {
         }
       }
     }
-  }
-
-  .error-message {
-    color: #dc3545;
-    text-align: center;
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border-radius: 6px;
-    background-color: rgba(220, 53, 69, 0.05);
-    border: 1px solid rgba(220, 53, 69, 0.1);
-    font-size: 13px;
-  }
-
-  .success-message {
-    color: #28a745;
-    text-align: center;
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border-radius: 6px;
-    background-color: rgba(40, 167, 69, 0.05);
-    border: 1px solid rgba(40, 167, 69, 0.1);
-    font-size: 13px;
   }
 }
 </style>

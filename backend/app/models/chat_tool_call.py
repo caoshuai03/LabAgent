@@ -6,7 +6,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +34,9 @@ class ChatToolCall(Base):
     risk_level: Mapped[str] = mapped_column(String(20), nullable=False, comment="风险等级")
     arguments: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, comment="脱敏参数")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", comment="执行状态")
+    visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true", comment="是否向用户展示"
+    )
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="结果摘要")
     output_preview: Mapped[str | None] = mapped_column(Text, nullable=True, comment="脱敏截断后的输出预览")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, comment="错误信息")

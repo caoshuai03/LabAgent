@@ -76,8 +76,10 @@ import { getSkills } from '../api/skills'
 import Sidebar from '../components/Sidebar.vue'
 import { useChatStore } from '../stores/chat'
 import { escapeHtml } from '../utils/html'
+import { useToast } from '../composables/useToast'
 
 const chatStore = useChatStore()
+const toast = useToast()
 
 // 简单的 Markdown 渲染函数（不依赖外部库）
 // 这里会尽量把段落、列表和标题分开渲染，避免完整描述里出现过多空白
@@ -145,11 +147,6 @@ const renderedContent = computed(() => {
   return renderMarkdown(skillDetail.value.content)
 })
 
-const showMessage = (message, type = 'info') => {
-  console.log(`[${type.toUpperCase()}] ${message}`)
-  alert(message)
-}
-
 const loadSkills = async () => {
   loading.value = true
   try {
@@ -157,7 +154,7 @@ const loadSkills = async () => {
     skills.value = response.data.data || []
   } catch (error) {
     console.error('加载 Skills 失败:', error)
-    showMessage('加载 Skills 失败', 'error')
+    toast.error('加载 Skills 失败')
   } finally {
     loading.value = false
   }

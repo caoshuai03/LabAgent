@@ -570,15 +570,25 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 设置指定会话最后一条助手消息的引用来源（RAG 检索命中的来源）
-   * @param {Array} sources - 来源列表，每项含 file_name/snippet/score（全蛇形）
+   * 追加合并指定会话最后一条助手消息的引用来源（RAG 检索命中的来源）
+   * 检索即工具后一次对话可能多次下发 sources，按 file_name + snippet 去重合并，保留全部来源
+   * @param {Array} sources - 本次检索的来源列表，每项含 file_name/snippet/score（全蛇形）
    * @param {string} [conversationKey] - 会话 key
    */
   const setLastMessageSources = (sources, conversationKey = activeConversationKey.value) => {
     const lastMessage = getLastMessage(conversationKey)
-    if (lastMessage && lastMessage.sender === 'assistant') {
-      lastMessage.sources = Array.isArray(sources) ? sources : []
-    }
+    if (!lastMessage || lastMessage.sender !== 'assistant') return
+    const incoming = Array.isArray(sources) ? sources : []
+    const existing = Array.isArray(lastMessage.sources) ? lastMessage.sources : []
+    const seen = new Set(existing.map((item) => `${item.file_name}|${item.snippet}`))
+    const merged = [...existing]
+    incoming.forEach((item) => {
+      const key = `${item.file_name}|${item.snippet}`
+      if (seen.has(key)) return
+      seen.add(key)
+      merged.push(item)
+    })
+    lastMessage.sources = merged
   }
 
   /**

@@ -5,7 +5,7 @@
 -->
 <template>
   <Teleport to="body">
-    <div class="toast-container">
+    <div class="toast-container" aria-live="polite" aria-atomic="false">
       <TransitionGroup name="toast">
         <div
           v-for="toast in toasts"
@@ -35,8 +35,7 @@ const iconOf = (type) => {
       '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
     warning:
       '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
-    info:
-      '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>',
+    info: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>',
   }
   return icons[type] || icons.info
 }
@@ -45,32 +44,34 @@ const iconOf = (type) => {
 <style lang="scss" scoped>
 .toast-container {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: 20px;
+  right: 20px;
   z-index: 10000;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   pointer-events: none;
 }
 
 .toast-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 240px;
-  max-width: 420px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: #fff;
+  gap: 12px;
+  width: max-content;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: var(--bg-primary, #fff);
   color: var(--text-primary, #353740);
   font-size: 14px;
   line-height: 1.5;
   cursor: pointer;
   pointer-events: auto;
   border: 1px solid var(--border-color, #e5e5e5);
-  border-left: 4px solid var(--primary-color, #90138b);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.1),
+    0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .toast-icon {
@@ -86,34 +87,40 @@ const iconOf = (type) => {
 }
 
 .toast-success {
-  border-left-color: #10b981;
-
   .toast-icon {
     color: #10b981;
   }
 }
 
 .toast-error {
-  border-left-color: #ef4444;
-
   .toast-icon {
     color: #ef4444;
   }
 }
 
 .toast-warning {
-  border-left-color: #f59e0b;
-
   .toast-icon {
     color: #f59e0b;
   }
 }
 
 .toast-info {
-  border-left-color: var(--primary-color, #90138b);
-
   .toast-icon {
     color: var(--primary-color, #90138b);
+  }
+}
+
+@media (max-width: 480px) {
+  .toast-container {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+  }
+
+  .toast-item {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
   }
 }
 

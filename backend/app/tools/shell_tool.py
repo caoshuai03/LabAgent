@@ -3,6 +3,7 @@
 @date: 2026-07-15 00:41
 @description: LangChain ShellTool 受控 Tool Runner 适配
 """
+import logging
 import time
 from pathlib import Path
 from typing import Annotated, Any
@@ -16,6 +17,8 @@ from app.core.config import settings
 from app.tools.policy import tool_policy
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 from app.tools.workspace import WorkspaceError, workspace_manager
+
+logger = logging.getLogger("labagent")
 
 
 class SandboxShellProcess:
@@ -115,12 +118,17 @@ async def execute_shell(
         )
     except Exception as exc:  # noqa: BLE001 - 工具异常转为可控 ToolMessage
         duration_ms = int((time.monotonic() - started) * 1000)
+        logger.exception("Shell工具执行失败: tool_call_id=%s", tool_call_id)
         message = truncate_text(str(exc), 500)
+        is_timeout = isinstance(exc, httpx.TimeoutException)
+        error_type = "timeout" if is_timeout else (
+            "invalid_argument" if isinstance(exc, WorkspaceError) else "exception"
+        )
         writer({
             "tool_event": {
                 "event_type": "status",
                 "payload": {
-                    "stage": "tool_failed",
+                    "stage": "tool_timeout" if is_timeout else "tool_failed",
                     "tool_call_id": tool_call_id,
                     "tool_name": "execute_shell",
                     "success": False,
@@ -131,7 +139,8 @@ async def execute_shell(
         })
         return result_envelope(
             success=False,
-            summary="Shell执行失败",
+            summary="Shell执行超时" if is_timeout else "Shell执行失败",
             error=message,
+            error_type=error_type,
             duration_ms=duration_ms,
         )

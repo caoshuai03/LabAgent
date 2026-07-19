@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 from app.core.config import settings
 from app.schemas.tool import ToolDefinitionVO
 from app.tools.file_tools import FILE_TOOLS
+from app.tools.knowledge_tool import KNOWLEDGE_TOOLS
 from app.tools.shell_tool import execute_shell
 
 
@@ -26,7 +27,7 @@ class ToolRegistry:
     """统一管理框架工具和可见性。"""
 
     def __init__(self) -> None:
-        tools = [*FILE_TOOLS, execute_shell]
+        tools = [*FILE_TOOLS, *KNOWLEDGE_TOOLS, execute_shell]
         self._tools: dict[str, BaseTool] = {}
         for tool_item in tools:
             if tool_item.name in self._tools:
@@ -34,6 +35,7 @@ class ToolRegistry:
             self._tools[tool_item.name] = tool_item
         self._metadata = {
             "write_file": ToolMetadata("langchain_file", "medium", False),
+            "search_knowledge_base": ToolMetadata("rag", "low", True),
             "execute_shell": ToolMetadata("langchain_shell", "high", False),
         }
 
@@ -45,7 +47,7 @@ class ToolRegistry:
         """返回可绑定给模型的工具。"""
         if not settings.agent_tools_enabled:
             return []
-        names: list[str] = []
+        names: list[str] = ["search_knowledge_base"]
         if settings.file_tools_enabled:
             names.extend(tool_item.name for tool_item in FILE_TOOLS)
         if settings.shell_tool_enabled:

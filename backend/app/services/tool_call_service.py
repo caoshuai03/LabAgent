@@ -62,6 +62,7 @@ class ToolCallService:
         output_preview: str | None = None,
         error_message: str | None = None,
         duration_ms: int | None = None,
+        visible: bool | None = None,
     ) -> None:
         """更新状态及执行结果。"""
         values: dict[str, Any] = {"status": status}
@@ -79,6 +80,8 @@ class ToolCallService:
             values["error_message"] = error_message
         if duration_ms is not None:
             values["duration_ms"] = duration_ms
+        if visible is not None:
+            values["visible"] = visible
         await self.repo.update_by_call_id(session_id, tool_call_id, values)
 
     async def list_by_session(self, session_id: uuid.UUID) -> list[ChatToolCallVO]:

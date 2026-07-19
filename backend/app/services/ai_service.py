@@ -49,6 +49,21 @@ def _messages_from_update(chunk: Any, node_name: str) -> list[Any]:
     return list(messages) if isinstance(messages, list) else []
 
 
+def _merge_sources(
+    existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """累积多次检索的引用来源并按 file_name + snippet 去重（供持久化保存全部来源）。"""
+    merged = list(existing)
+    seen = {(item.get("file_name"), item.get("snippet")) for item in existing}
+    for item in incoming:
+        key = (item.get("file_name"), item.get("snippet"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
 class AiService:
     """RAG + Agent 对话编排。"""
 
@@ -103,8 +118,7 @@ class AiService:
             "model_name": model,
             "agent_run_id": trace_id,
             "tool_round": 0,
-            "documents": [],
-            "sources": [],
+            "tool_call_signatures": {},
         }
         async for event in self._stream_graph(
             graph_input,
@@ -205,13 +219,16 @@ class AiService:
                 ):
                     if stream_mode == "custom":
                         if isinstance(chunk, dict) and isinstance(chunk.get("sources"), list):
-                            response_sources = chunk["sources"]
-                            if response_sources:
-                                yield _sse_event("sources", session_id, trace_id, {"sources": response_sources})
+                            new_sources = chunk["sources"]
+                            if new_sources:
+                                response_sources = _merge_sources(response_sources, new_sources)
+                                yield _sse_event("sources", session_id, trace_id, {"sources": new_sources})
                         tool_event = chunk.get("tool_event") if isinstance(chunk, dict) else None
                         if isinstance(tool_event, dict):
                             event_type = str(tool_event.get("event_type") or "status")
                             payload = tool_event.get("payload") if isinstance(tool_event.get("payload"), dict) else {}
+                            if event_type == "tool_call" and payload.get("tool_call_id"):
+                                seen_tool_calls.add(str(payload["tool_call_id"]))
                             await self._persist_status_event(sid, payload)
                             yield _sse_event(event_type, session_id, trace_id, payload)
                         continue
@@ -263,19 +280,6 @@ class AiService:
                                     round_number,
                                 )
                                 await db.commit()
-                            yield _sse_event(
-                                "tool_call",
-                                session_id,
-                                trace_id,
-                                {
-                                    "tool_call_id": call_id,
-                                    "tool_name": tool_name,
-                                    "arguments": safe_arguments,
-                                    "round": round_number,
-                                    "risk_level": metadata.risk_level,
-                                },
-                            )
-
                     for message in _messages_from_update(chunk, "tools"):
                         if not isinstance(message, ToolMessage):
                             continue
@@ -285,6 +289,10 @@ class AiService:
                         seen_tool_results.add(call_id)
                         result = parse_result_envelope(message.content)
                         success = bool(result.get("success", True))
+                        internal = bool(result.get("internal", False))
+                        result_status = str(
+                            result.get("status") or ("success" if success else "failed")
+                        )
                         summary = truncate_text(str(result.get("summary") or "工具执行完成"), 500)
                         error_message = result.get("error")
                         duration_ms = result.get("duration_ms")
@@ -298,17 +306,21 @@ class AiService:
                             await ToolCallService(db).update_status(
                                 sid,
                                 call_id,
-                                "success" if success else "failed",
+                                result_status,
                                 result_summary=summary,
                                 output_preview=output_preview,
                                 error_message=str(error_message) if error_message else None,
                                 duration_ms=int(duration_ms) if isinstance(duration_ms, int | float) else None,
+                                visible=not internal,
                             )
                             await db.commit()
+                        if internal:
+                            continue
                         result_payload = {
                             "tool_call_id": call_id,
                             "tool_name": tool_name,
                             "success": success,
+                            "status": result_status,
                             "result_summary": summary,
                             "duration_ms": duration_ms,
                         }
@@ -358,12 +370,6 @@ class AiService:
             if paused:
                 return
 
-            if not response_sources:
-                snapshot = await graph.aget_state(config)
-                sources = snapshot.values.get("sources", []) if snapshot is not None else []
-                if isinstance(sources, list):
-                    response_sources = sources
-
             answer = "".join(full_response) or final_content
             if answer and not full_response:
                 yield _sse_event("token", session_id, trace_id, {"content": answer})
@@ -403,6 +409,13 @@ class AiService:
             )
             yield _sse_event("error", session_id, trace_id, {"message": "Agent执行超时，请稍后重试"})
         except asyncio.CancelledError:
+            logger.warning(
+                "Agent流式连接中断或任务被取消: session_id=%s, trace_id=%s, cost=%dms, tool_calls=%d",
+                session_id,
+                trace_id,
+                int((time.monotonic() - started) * 1000),
+                len(seen_tool_calls),
+            )
             self._schedule_cancel_cleanup(record_trace_id)
             return
         except Exception:  # noqa: BLE001 - SSE 中返回受控错误

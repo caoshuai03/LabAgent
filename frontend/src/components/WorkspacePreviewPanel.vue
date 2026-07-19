@@ -210,7 +210,7 @@ watch(
   height: 100vh;
   flex-shrink: 0;
   border-left: 1px solid var(--border-color, #e5e5e5);
-  background: var(--bg-primary, #fff);
+  background: var(--app-page-bg, #fafafc);
   overflow: hidden;
 }
 
@@ -219,7 +219,6 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 12px;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
 }
 
@@ -479,7 +478,7 @@ watch(
     border: 1px solid #eff1f3;
     border-radius: 12px;
     overflow: hidden;
-    background: #fbfbfc;
+    background: var(--app-page-bg, #fafafc);
   }
 
   :deep(.code-block-header) {

@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: var(--bg-primary);
+  background-color: var(--app-page-bg);
   transition: background-color 0.3s ease;
 }
 

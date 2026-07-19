@@ -22,3 +22,19 @@ def test_result_envelope_redacts_shell_output() -> None:
 
     assert "my-key" not in result
     assert payload["output"] == "***"
+
+
+def test_result_envelope_marks_internal_rejection() -> None:
+    """内部拒绝结果应保留精确状态和仅后端消费标记。"""
+    result = result_envelope(
+        success=False,
+        summary="工具未执行",
+        error="只允许使用工作区相对路径",
+        error_type="policy_rejected",
+        status="rejected",
+        internal=True,
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "rejected"
+    assert payload["internal"] is True

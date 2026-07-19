@@ -152,6 +152,12 @@ const MIN_HEIGHT = 24
 const MAX_HEIGHT = 320
 const EXPAND_TRIGGER_HEIGHT = 84
 const COLLAPSE_TRIGGER_HEIGHT = 56
+const TOOL_FAILURE_STAGES = new Set([
+  'tool_failed',
+  'tool_timeout',
+  'tool_rejected',
+  'tool_cancelled',
+])
 
 const availableModels = AVAILABLE_MODELS
 
@@ -453,6 +459,17 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     event.event_type === 'status' ||
     event.event_type === 'skill_loaded'
   ) {
+    if (event.event_type === 'status' && TOOL_FAILURE_STAGES.has(payload.stage)) {
+      const toolError = new Error(
+        payload.message || `${payload.tool_name || 'tool'} 执行异常：${payload.stage}`,
+      )
+      toolError.name = 'ToolExecutionError'
+      console.error('[LabAgent 工具异常]', toolError, {
+        event,
+        payload,
+        conversationKey: streamTask.conversationKey,
+      })
+    }
     chatStore.addToolEventToLastMessage({
       eventType: event.event_type,
       payload,
@@ -591,7 +608,7 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .chat-input-container {
   padding: 0;
-  background-color: var(--bg-primary);
+  background-color: var(--app-page-bg);
   transition:
     background-color 0.3s ease,
     border-color 0.3s ease;
@@ -605,11 +622,7 @@ onUnmounted(() => {
     align-items: stretch;
     position: relative;
     overflow: visible;
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.98) 0%,
-      rgba(250, 250, 252, 0.95) 100%
-    );
+    background: var(--app-page-bg);
     border: 1px solid rgba(229, 231, 235, 1);
     border-radius: 32px;
     min-height: 96px;

@@ -4,8 +4,13 @@
 @description: RAG 向量存储与索引层——PGVector 托管向量表 + SQLRecordManager 切片索引，封装增量索引/按来源删除/检索
               langchain 的 PGVector/index/SQLRecordManager 为同步组件，异步 service 调用时须用 asyncio.to_thread 隔离
 """
+import re
+
 from langchain.indexes import SQLRecordManager, index
+from langchain.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
 from langchain_postgres import PGVector
 
 from app.core.config import settings
@@ -14,6 +19,19 @@ from app.services.model_provider import model_provider
 # 全局单例，随首次使用惰性构建
 _vector_store: PGVector | None = None
 _record_manager: SQLRecordManager | None = None
+
+# BM25 内存索引缓存：切片集合未变时复用，避免每次检索都全量重建倒排索引
+_bm25_retriever: BM25Retriever | None = None
+_bm25_fingerprint: int | None = None
+
+# BM25 中文分词：默认空格分词对中文无效，这里按「英文/数字词 + 中文单字」切分，
+# 无需引入额外分词依赖即可让关键词召回对中文生效
+_BM25_TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]")
+
+
+def _bm25_preprocess(text: str) -> list[str]:
+    """BM25 分词：英文/数字按词、中文按单字，统一小写。"""
+    return _BM25_TOKEN_PATTERN.findall(text.lower())
 
 
 def _get_vector_store() -> PGVector:
@@ -70,3 +88,36 @@ def delete_by_source(source_id: str) -> int:
 def search_with_relevance_scores(query: str, k: int) -> list[tuple[Document, float]]:
     """向量相似度检索，返回 (文档, 框架归一化相关度分数) 列表。"""
     return _get_vector_store().similarity_search_with_relevance_scores(query, k=k)
+
+
+def _get_bm25_retriever(top_k: int) -> BM25Retriever | None:
+    """构建/复用 BM25 内存检索器；切片集合的键指纹未变时复用缓存，无切片时返回 None。"""
+    global _bm25_retriever, _bm25_fingerprint
+    keys = _get_record_manager().list_keys()
+    if not keys:
+        _bm25_retriever = None
+        _bm25_fingerprint = None
+        return None
+    fingerprint = hash(tuple(sorted(keys)))
+    if _bm25_retriever is None or fingerprint != _bm25_fingerprint:
+        documents = _get_vector_store().get_by_ids(keys)
+        if not documents:
+            return None
+        _bm25_retriever = BM25Retriever.from_documents(
+            documents, preprocess_func=_bm25_preprocess
+        )
+        _bm25_fingerprint = fingerprint
+    _bm25_retriever.k = top_k
+    return _bm25_retriever
+
+
+def build_hybrid_retriever(vector_top_k: int, bm25_top_k: int) -> BaseRetriever:
+    """构建向量 + BM25 的 EnsembleRetriever（内置 RRF 融合）。
+
+    无 BM25 语料（向量库为空或取不到切片）时降级为纯向量检索器，保证检索链路不中断。
+    """
+    vector_retriever = _get_vector_store().as_retriever(search_kwargs={"k": vector_top_k})
+    bm25_retriever = _get_bm25_retriever(bm25_top_k)
+    if bm25_retriever is None:
+        return vector_retriever
+    return EnsembleRetriever(retrievers=[vector_retriever, bm25_retriever], weights=[0.5, 0.5])

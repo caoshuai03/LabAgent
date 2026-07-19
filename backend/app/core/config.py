@@ -69,9 +69,16 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 100
     rag_top_k: int = 20
     rag_similarity_threshold: float = 0.5
+    rag_query_rewrite_model: str = ""
     rag_rerank_enabled: bool = True
     rag_rerank_top_n: int = 5
     rag_rerank_model: str = ""
+    # rerank 只需输出文档 ID 排序，限制本地模型输出长度以避免无意义长思考
+    rag_rerank_num_predict: int = 64
+    # rerank 单次调用总超时（秒），避免模型持续生成导致工具长期无结果
+    rag_rerank_timeout_seconds: int = 30
+    # 混合检索：BM25 关键词召回条数（与向量召回一同进入 RRF 融合）
+    rag_bm25_top_k: int = 20
 
     # Agent 工具
     agent_tools_enabled: bool = True
@@ -85,7 +92,9 @@ class Settings(BaseSettings):
     tool_timeout_seconds: int = 60
     shell_timeout_seconds: int = 20
     agent_timeout_seconds: int = 180
-    agent_max_tool_rounds: int = 8
+    agent_max_tool_rounds: int = 50
+    # 同一工具+同参数在单次 Agent 运行内的最大重复调用次数，超过即拒绝该调用
+    agent_duplicate_tool_call_limit: int = 3
     tool_runner_base_url: str = "http://tool-runner:8990"
     tool_runner_token: str = ""
 

@@ -57,9 +57,32 @@ class ModelProvider:
             client_kwargs={"timeout": settings.ollama_embedding_timeout},
         )
 
+    def get_query_rewrite_model(self) -> BaseChatModel:
+        """构建用于 MultiQuery 查询改写的模型，与 rerank 模型职责分离。"""
+        model_name = settings.rag_query_rewrite_model or settings.ollama_chat_model
+        if model_name in _AZURE_MODELS or model_name in _OPENAI_MODELS:
+            return self.get_chat_model(model_name)
+        return ChatOllama(
+            model=model_name,
+            base_url=settings.ollama_base_url,
+            reasoning=False,
+            temperature=0,
+            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+        )
+
     def get_rerank_model(self) -> BaseChatModel:
-        """构建用于 LLM rerank 精排的模型；未单独配置时复用默认 chat 模型。"""
-        return self.get_chat_model(settings.rag_rerank_model or None)
+        """构建用于 LLM rerank 精排的模型；本地模型关闭思考并限制短 JSON 输出。"""
+        model_name = settings.rag_rerank_model or settings.ollama_chat_model
+        if model_name in _AZURE_MODELS or model_name in _OPENAI_MODELS:
+            return self.get_chat_model(model_name)
+        return ChatOllama(
+            model=model_name,
+            base_url=settings.ollama_base_url,
+            reasoning=False,
+            num_predict=settings.rag_rerank_num_predict,
+            temperature=0,
+            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+        )
 
     def _build_ollama(self, model_name: str) -> ChatOllama:
         """构建 Ollama 聊天模型。"""

@@ -57,7 +57,7 @@ class MessageService:
         tool_call_records = await ToolCallRepository(self.session).list_by_session(sid)
         calls_by_message: dict[int, list[ChatToolCallVO]] = {}
         for record in tool_call_records:
-            if record.message_id is not None:
+            if record.message_id is not None and record.visible:
                 calls_by_message.setdefault(record.message_id, []).append(
                     ChatToolCallVO.model_validate(record, from_attributes=True)
                 )

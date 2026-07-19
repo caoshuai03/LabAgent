@@ -3,6 +3,8 @@
 @date: 2026-07-15 00:41
 @description: LangChain FileManagementToolkit 文件工具适配（收敛为可靠写入工具 write_file，其余文件操作统一走 execute_shell）
 """
+import asyncio
+import logging
 import time
 from pathlib import Path
 from typing import Annotated, Any
@@ -15,6 +17,8 @@ from app.core.config import settings
 from app.tools.policy import tool_policy
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 from app.tools.workspace import WorkspaceError, workspace_manager
+
+logger = logging.getLogger("labagent")
 
 # 常见文本产物的语法高亮语言，供前端整文件预览（非 diff）渲染
 _PREVIEW_LANGUAGES: dict[str, str] = {
@@ -88,7 +92,8 @@ async def _invoke_file_tool(
         target_tool = FileManagementToolkit(
             root_dir=str(workspace), selected_tools=[tool_name]
         ).get_tools()[0]
-        output = str(await target_tool.ainvoke(arguments))
+        async with asyncio.timeout(settings.tool_timeout_seconds):
+            output = str(await target_tool.ainvoke(arguments))
         output = truncate_text(output)
         success = not output.lower().startswith("error:")
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -122,9 +127,43 @@ async def _invoke_file_tool(
             preview_language=preview_language,
             preview_content=preview_content,
         )
+    except TimeoutError:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        logger.exception(
+            "文件工具执行超时: tool_name=%s, tool_call_id=%s",
+            tool_name,
+            tool_call_id,
+        )
+        message = f"{tool_name} 执行超时（超过 {settings.tool_timeout_seconds}s）"
+        writer({
+            "tool_event": {
+                "event_type": "status",
+                "payload": {
+                    "stage": "tool_timeout",
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "success": False,
+                    "duration_ms": duration_ms,
+                    "message": message,
+                },
+            }
+        })
+        return result_envelope(
+            success=False,
+            summary=f"{tool_name} 执行超时",
+            error=message,
+            error_type="timeout",
+            duration_ms=duration_ms,
+        )
     except Exception as exc:  # noqa: BLE001 - 工具异常需转换为可控 ToolMessage
         duration_ms = int((time.monotonic() - started) * 1000)
+        logger.exception(
+            "文件工具执行失败: tool_name=%s, tool_call_id=%s",
+            tool_name,
+            tool_call_id,
+        )
         message = truncate_text(str(exc), 500)
+        error_type = "invalid_argument" if isinstance(exc, WorkspaceError) else "exception"
         writer({
             "tool_event": {
                 "event_type": "status",
@@ -142,6 +181,7 @@ async def _invoke_file_tool(
             success=False,
             summary=f"{tool_name} 执行失败",
             error=message,
+            error_type=error_type,
             duration_ms=duration_ms,
         )
 

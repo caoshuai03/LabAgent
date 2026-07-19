@@ -15,7 +15,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 import app.graph.chat_graph as chat_graph
-from app.services import rag_retrieval
 from app.tools.workspace import workspace_manager
 
 
@@ -57,12 +56,33 @@ class FakeToolModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=response)])
 
 
-async def _empty_retrieve(question: str) -> list:
-    return []
+class FakeMultiToolModel(BaseChatModel):
+    """一次返回多个工具调用，并记录下一轮收到的工具结果。"""
 
+    planned_tool_calls: list[dict[str, Any]]
+    received_tool_call_ids: list[str] = []
 
-async def _empty_rerank(question: str, documents: list) -> list:
-    return []
+    @property
+    def _llm_type(self) -> str:
+        return "fake-multi-tool-model"
+
+    def bind_tools(self, tools: Any, **kwargs: Any):
+        return self
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        tool_messages = [message for message in messages if isinstance(message, ToolMessage)]
+        if tool_messages:
+            self.received_tool_call_ids = [str(message.tool_call_id) for message in tool_messages]
+            response = AIMessage(content="工具处理完成")
+        else:
+            response = AIMessage(content="", tool_calls=self.planned_tool_calls)
+        return ChatResult(generations=[ChatGeneration(message=response)])
 
 
 def _graph_input(session_id: str) -> dict[str, Any]:
@@ -73,8 +93,7 @@ def _graph_input(session_id: str) -> dict[str, Any]:
         "model_name": None,
         "agent_run_id": uuid.uuid4().hex,
         "tool_round": 0,
-        "documents": [],
-        "sources": [],
+        "tool_call_signatures": {},
     }
 
 
@@ -84,8 +103,6 @@ def graph_environment(tmp_path: Path, monkeypatch):
     workspace_manager.root = tmp_path.resolve()
     monkeypatch.setattr(chat_graph.settings, "file_write_require_approval", False)
     monkeypatch.setattr(chat_graph, "get_checkpointer", lambda: InMemorySaver())
-    monkeypatch.setattr(rag_retrieval, "retrieve", _empty_retrieve)
-    monkeypatch.setattr(rag_retrieval, "rerank", _empty_rerank)
     yield
     workspace_manager.root = old_root
 
@@ -113,9 +130,62 @@ async def test_agent_executes_file_tool(graph_environment, monkeypatch) -> None:
     target = workspace_manager.root / "1" / session_id / "output" / "test.txt"
     assert target.read_text(encoding="utf-8") == "hello"
     assert nodes == [
-        "prepare_context", "retrieve", "rerank", "agent", "authorize_tools",
-        "tools", "agent", "finalize",
+        "prepare_context", "agent", "authorize_tools", "tools", "agent", "finalize",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_only_rejects_invalid_tool_call(graph_environment, monkeypatch) -> None:
+    """同批调用中只有非法路径被拒绝，合法写入继续执行且内部拒绝不下发前端。"""
+    model = FakeMultiToolModel(
+        planned_tool_calls=[
+            {
+                "name": "write_file",
+                "args": {"file_path": "/root/bad.txt", "text": "bad", "append": False},
+                "id": "call-bad",
+                "type": "tool_call",
+            },
+            {
+                "name": "write_file",
+                "args": {"file_path": "output/good.txt", "text": "good", "append": False},
+                "id": "call-good",
+                "type": "tool_call",
+            },
+        ]
+    )
+    monkeypatch.setattr(chat_graph.model_provider, "get_chat_model", lambda model_name=None: model)
+    graph = chat_graph._build_graph()
+    session_id = str(uuid.uuid4())
+
+    custom_events: list[dict[str, Any]] = []
+    async for stream_mode, chunk in graph.astream(
+        _graph_input(session_id),
+        config={"configurable": {"thread_id": f"1:{session_id}"}},
+        stream_mode=["updates", "custom"],
+    ):
+        if stream_mode == "custom" and isinstance(chunk, dict):
+            custom_events.append(chunk)
+
+    workspace = workspace_manager.root / "1" / session_id
+    assert (workspace / "output" / "good.txt").read_text(encoding="utf-8") == "good"
+    assert set(model.received_tool_call_ids) == {"call-bad", "call-good"}
+
+    visible_tool_events = [
+        event["tool_event"]
+        for event in custom_events
+        if isinstance(event.get("tool_event"), dict)
+    ]
+    visible_call_ids = {
+        str(event["payload"].get("tool_call_id"))
+        for event in visible_tool_events
+        if event.get("event_type") == "tool_call"
+    }
+    assert visible_call_ids == {"call-good"}
+    assert not any(
+        event.get("event_type") == "status"
+        and event.get("payload", {}).get("tool_call_id") == "call-bad"
+        for event in visible_tool_events
+    )
 
 
 @pytest.mark.asyncio

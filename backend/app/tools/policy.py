@@ -55,6 +55,9 @@ class ToolPolicy:
         """评估工具是否允许以及是否需审批。"""
         if not settings.agent_tools_enabled:
             return ToolPolicyDecision(False, False, "high", "Agent工具未启用")
+        if tool_name == "search_knowledge_base":
+            # 只读知识库检索，无路径/命令参数，低风险直接放行
+            return ToolPolicyDecision(True, False, "low")
         if tool_name in _FILE_PATH_FIELDS:
             return self._evaluate_file(tool_name, arguments, workspace)
         if tool_name == "execute_shell":

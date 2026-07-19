@@ -5,7 +5,7 @@
         <ToolActivityPanel
           v-if="message.sender === 'assistant' && message.toolEvents?.length"
           :tool-events="message.toolEvents"
-          :session-id="chatStore.currentConversationId || ''"
+          :completed="message.isComplete"
         />
 
         <div
@@ -385,7 +385,7 @@ watch(
   padding: 24px 0;
 
   &.message-user {
-    background-color: var(--bg-primary);
+    background-color: transparent;
     transition: background-color 0.3s ease;
 
     .message-container {
@@ -408,7 +408,7 @@ watch(
   }
 
   &.message-assistant {
-    background-color: var(--bg-primary);
+    background-color: transparent;
     transition: background-color 0.3s ease;
 
     .message-container {
@@ -423,7 +423,7 @@ watch(
     }
 
     .message-text {
-      background-color: var(--assistant-message-bg);
+      background-color: transparent;
       color: var(--assistant-message-text);
     }
   }
@@ -489,13 +489,21 @@ watch(
   }
 
   :deep(blockquote) {
-    margin: 1em 0;
-    padding: 0.5em 1em;
-    border-left: 4px solid #90138b;
-    background-color: rgba(144, 19, 139, 0.05);
-    border-radius: 4px;
+    margin: 0.75em 0;
+    padding: 0.1em 0 0.1em 1em;
+    border-left: 2px solid var(--border-color, #d0d7de);
+    background-color: transparent;
+    border-radius: 0;
     color: var(--text-secondary);
-    font-style: italic;
+    font-style: normal;
+  }
+
+  :deep(blockquote > :first-child) {
+    margin-top: 0;
+  }
+
+  :deep(blockquote > :last-child) {
+    margin-bottom: 0;
   }
 
   :deep(code:not(pre code)) {
