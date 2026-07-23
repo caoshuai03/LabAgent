@@ -2,9 +2,10 @@
 
 面向高校实验教学的智能学习与教学辅助 Agent，提供课程知识问答、实验指导、代码排查和知识库检索能力。
 
+![LabAgent 首页演示](docs/images/labagent-readme-gif.gif)
+
 ![LabAgent 对话工作流](docs/images/labagent-chat-workflow.png)
 
-![LabAgent 知识库管理](docs/images/labagent-knowledge.png)
 
 ## 核心能力
 
