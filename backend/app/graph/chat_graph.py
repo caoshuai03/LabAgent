@@ -51,6 +51,8 @@ class AgentState(MessagesState):
     agent_run_id: str
     workspace_path: str
     tool_round: int
+    rag_retrieval_mode: str
+    rag_retrieval_top_k: int
     tool_authorized: bool
     tool_call_signatures: dict[str, int]
     tool_allowed_call_ids: list[str]

@@ -1,4 +1,4 @@
-import apiClient, { buildApiUrl } from './index'
+import apiClient, { buildApiUrl, handleAuthExpired, isAuthExpiredResponse } from './index'
 
 /**
  * 聊天相关 API
@@ -139,10 +139,28 @@ const sendSseRequest = (url, body, callbacks) => {
   })
     .then(async (response) => {
       if (!response.ok) {
-        if (response.status === 40100 || response.status === 40101 || response.status === 401) {
+        if (response.status === 401) {
+          handleAuthExpired()
           throw new Error('未登录或无权限，请先登录后再重试')
         }
         throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const data = await response.json()
+        if (isAuthExpiredResponse(data)) {
+          handleAuthExpired()
+          throw new Error(data.message || '登录已过期或无效')
+        }
+        if (data?.code && data.code !== 0) {
+          throw new Error(data.message || '请求失败')
+        }
+        throw new Error('服务响应格式异常')
+      }
+
+      if (!response.body) {
+        throw new Error('服务响应为空')
       }
 
       const reader = response.body.getReader()

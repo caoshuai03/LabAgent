@@ -507,8 +507,10 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     const message = payload.message || '请求失败'
     if (!lastMessage.content) {
       lastMessage.content = `错误: ${message}`
-      chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
+    } else if (!lastMessage.content.includes(`错误: ${message}`)) {
+      lastMessage.content = `${lastMessage.content}\n\n错误: ${message}`
     }
+    chatStore.updateLastMessage(lastMessage.content, streamTask.conversationKey)
     return
   }
 

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import apiClient, { userApi } from '../api'
+import apiClient, { isAuthExpiredResponse, userApi } from '../api'
 import { readJsonStorage } from '../utils/storage'
 
 export const useUserStore = defineStore('user', () => {
@@ -9,15 +9,22 @@ export const useUserStore = defineStore('user', () => {
 
   // 验证token有效性
   const validateToken = async () => {
-    if (!token.value || !userInfo.value) return false
+    if (!token.value || !userInfo.value) {
+      logout()
+      return false
+    }
 
     try {
       // 尝试获取用户信息来验证token有效性
       await apiClient.get('/v1/user/validate?id=' + userInfo.value.id)
       return true
     } catch (error) {
-      // 如果返回401，则token无效
-      if (error.response?.status === 401) {
+      // 如果返回401或业务未登录码，则token无效
+      if (
+        error.isAuthExpired ||
+        error.response?.status === 401 ||
+        isAuthExpiredResponse(error.response?.data)
+      ) {
         logout() // 清除无效的token
         return false
       }

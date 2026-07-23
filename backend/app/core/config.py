@@ -42,7 +42,9 @@ class Settings(BaseSettings):
     ollama_chat_model: str = "qwen3:8b"
     ollama_embedding_model: str = "turingdance/gte-large-zh:latest"
     # 嵌入模型请求超时（秒）：Ollama 不可达时快速失败以触发检索降级，避免拖死整个对话
-    ollama_embedding_timeout: int = 2
+    ollama_embedding_timeout: int = 120
+    # 评测裁判模型请求超时（秒）：RAGAS 结构化判断比普通聊天更慢，需单独放宽
+    ollama_judge_timeout: int = 120
     openai_api_key: str = ""
     openai_base_url: str = "https://aistudio.baidu.com/llm/lmapi/v3"
     openai_chat_model: str = "ernie-4.5-turbo-128k-preview"

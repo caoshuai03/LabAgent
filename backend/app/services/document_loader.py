@@ -6,7 +6,7 @@
 import os
 import tempfile
 
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredMarkdownLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
 
 from app.core.errors import BusinessException, ErrorCode
@@ -45,7 +45,7 @@ def _build_loader(ext: str, path: str):
     if ext == "pdf":
         return PyPDFLoader(path)
     if ext in {"md", "markdown"}:
-        return UnstructuredMarkdownLoader(path)
+        return TextLoader(path, encoding="utf-8")
     if ext == "txt":
         return TextLoader(path, encoding="utf-8")
     raise BusinessException(ErrorCode.PARAMS_ERROR, f"不支持的文件类型：{ext}")

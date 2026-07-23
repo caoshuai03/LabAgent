@@ -22,11 +22,25 @@
 
     <div v-if="chatStore.messages.length === 0" class="welcome-container">
       <div class="welcome-content">
-        <h2>
-          <span>{{ displayedWelcomeTitle }}</span>
-          <span class="typewriter-cursor" aria-hidden="true"></span>
-        </h2>
-        <p>可以向我提问实验设计、数据分析、论文理解、代码实现等问题</p>
+        <template v-if="chatStore.historyLoadError">
+          <h2>
+            <span>会话加载失败</span>
+          </h2>
+          <p>{{ chatStore.historyLoadError }}</p>
+        </template>
+        <template v-else-if="chatStore.currentConversationId && !chatStore.isLoading">
+          <h2>
+            <span>暂无会话内容</span>
+          </h2>
+          <p>这条会话没有可展示的历史消息</p>
+        </template>
+        <template v-else>
+          <h2>
+            <span>{{ displayedWelcomeTitle }}</span>
+            <span class="typewriter-cursor" aria-hidden="true"></span>
+          </h2>
+          <p>可以向我提问实验设计、数据分析、论文理解、代码实现等问题</p>
+        </template>
       </div>
     </div>
 

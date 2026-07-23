@@ -93,21 +93,61 @@ class AiService:
             await ToolCallService(db).cancel_running(trace_id)
             await db.commit()
 
+    async def _safe_cancel_running_tools(self, trace_id: str) -> None:
+        """安全清理运行中的工具记录，清理失败不吞掉主错误响应。"""
+        try:
+            await self._cancel_running_tools(trace_id)
+        except Exception:  # noqa: BLE001 - 异常路径只记录清理失败，继续返回原始错误
+            logger.exception("Agent异常清理工具状态失败: trace_id=%s", trace_id)
+
+    async def _save_assistant_error_message(
+        self,
+        session_id: uuid.UUID,
+        user_id: int,
+        record_trace_id: str,
+        content: str,
+    ) -> None:
+        """把 Agent 异常结果落库，避免历史会话只有标题或缺少失败原因。"""
+        try:
+            async with async_session_factory() as db:
+                message = await MessageService(db).save_message(
+                    session_id,
+                    user_id,
+                    "assistant",
+                    content,
+                )
+                await ToolCallService(db).link_message(record_trace_id, message.id)
+                await SessionService(db).touch(session_id)
+                await db.commit()
+        except Exception:  # noqa: BLE001 - 异常兜底落库失败只能记录日志，避免覆盖原始错误
+            logger.exception("Agent异常消息落库失败: session_id=%s, trace_id=%s", session_id, record_trace_id)
+
     async def stream_chat(
         self,
         message: str,
         session_id: str | None,
         user_id: int,
         model: str | None,
+        rag_retrieval_mode: str | None = None,
+        rag_retrieval_top_k: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """开始新的 Agent 运行。"""
         trace_id = uuid.uuid4().hex
-        async with async_session_factory() as db:
-            session_service = SessionService(db)
-            chat_session = await session_service.get_or_create_session(session_id, user_id, message)
-            sid = chat_session.id
-            await MessageService(db).save_message(sid, user_id, "user", message)
-            await db.commit()
+        try:
+            async with async_session_factory() as db:
+                try:
+                    session_service = SessionService(db)
+                    chat_session = await session_service.get_or_create_session(session_id, user_id, message)
+                    sid = chat_session.id
+                    await MessageService(db).save_message(sid, user_id, "user", message)
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+        except Exception:  # noqa: BLE001 - SSE 中返回受控错误
+            logger.exception("Agent会话初始化失败: user_id=%s, session_id=%s", user_id, session_id)
+            yield _sse_event("error", session_id or "", trace_id, {"message": "会话初始化失败，请稍后重试"})
+            return
 
         session_id_str = str(sid)
         yield _sse_event("session", session_id_str, trace_id, {"session_id": session_id_str})
@@ -119,6 +159,8 @@ class AiService:
             "agent_run_id": trace_id,
             "tool_round": 0,
             "tool_call_signatures": {},
+            "rag_retrieval_mode": rag_retrieval_mode or "current",
+            "rag_retrieval_top_k": rag_retrieval_top_k or settings.rag_rerank_top_n,
         }
         async for event in self._stream_graph(
             graph_input,
@@ -400,7 +442,11 @@ class AiService:
                 {"done": True, "tool_call_count": len(seen_tool_calls)},
             )
         except TimeoutError:
-            await self._cancel_running_tools(record_trace_id)
+            await self._safe_cancel_running_tools(record_trace_id)
+            error_content = "错误: Agent执行超时，请稍后重试"
+            if full_response or final_content:
+                error_content = f"{''.join(full_response) or final_content}\n\n{error_content}"
+            await self._save_assistant_error_message(sid, user_id, record_trace_id, error_content)
             yield _sse_event(
                 "status",
                 session_id,
@@ -420,7 +466,11 @@ class AiService:
             return
         except Exception:  # noqa: BLE001 - SSE 中返回受控错误
             logger.exception("Agent流式生成失败: session_id=%s, trace_id=%s", session_id, trace_id)
-            await self._cancel_running_tools(record_trace_id)
+            await self._safe_cancel_running_tools(record_trace_id)
+            error_content = "错误: 模型或工具服务异常，请稍后重试"
+            if full_response or final_content:
+                error_content = f"{''.join(full_response) or final_content}\n\n{error_content}"
+            await self._save_assistant_error_message(sid, user_id, record_trace_id, error_content)
             yield _sse_event("error", session_id, trace_id, {"message": "模型或工具服务异常，请稍后重试"})
         finally:
             running = self._running_tasks.get(trace_id)

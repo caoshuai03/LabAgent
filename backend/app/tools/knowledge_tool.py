@@ -7,17 +7,22 @@
 import asyncio
 import logging
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.tools import InjectedToolCallId, tool
+from langgraph.prebuilt import InjectedState
 
+from app.core.config import settings
 from app.services import rag_retrieval
+from app.services import rag_store
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 
 logger = logging.getLogger("labagent")
 
 # 单条命中片段进入模型上下文的最大长度，避免长文档挤占对话窗口
 _HIT_SNIPPET_MAX_LEN = 600
+_MIN_RETRIEVAL_TOP_K = 1
+_MAX_RETRIEVAL_TOP_K = 20
 
 
 def _format_hits(documents: list) -> str:
@@ -30,9 +35,19 @@ def _format_hits(documents: list) -> str:
     return "\n\n".join(parts)
 
 
+def _resolve_top_k(value: Any) -> int:
+    """解析评测注入的 top_k，避免异常值放大检索开销。"""
+    try:
+        top_k = int(value)
+    except (TypeError, ValueError):
+        top_k = settings.rag_rerank_top_n
+    return min(max(top_k, _MIN_RETRIEVAL_TOP_K), _MAX_RETRIEVAL_TOP_K)
+
+
 @tool("search_knowledge_base")
 async def search_knowledge_base(
     query: str,
+    state: Annotated[dict[str, Any], InjectedState] = None,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
     """Search the course knowledge base for materials relevant to the query.
@@ -53,8 +68,15 @@ async def search_knowledge_base(
         }
     })
     try:
-        documents = await rag_retrieval.retrieve(query)
-        documents = await rag_retrieval.rerank(query, documents)
+        current_state = state or {}
+        retrieval_mode = str(current_state.get("rag_retrieval_mode") or "current")
+        top_k = _resolve_top_k(current_state.get("rag_retrieval_top_k"))
+        if retrieval_mode == "vector_only":
+            retriever = rag_store.build_vector_retriever(top_k)
+            documents = await asyncio.to_thread(lambda: list(retriever.invoke(query)))
+        else:
+            documents = await rag_retrieval.retrieve(query)
+            documents = await rag_retrieval.rerank(query, documents)
         sources = rag_retrieval.build_sources(documents)
         if sources:
             writer({"sources": sources})

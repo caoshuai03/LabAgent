@@ -5,11 +5,12 @@
 """
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from app.models.chat_session import ChatSession
+from app.models.chat_message import ChatMessage
 
 
 class ChatSessionRepository:
@@ -29,10 +30,14 @@ class ChatSessionRepository:
         return chat_session
 
     async def list_by_user(self, user_id: int) -> list[ChatSession]:
-        """查询用户未删除的会话，按更新时间倒序。"""
+        """查询用户未删除且已有消息的会话，按更新时间倒序。"""
         stmt = (
             select(ChatSession)
-            .where(ChatSession.user_id == user_id, ChatSession.deleted == 0)
+            .where(
+                ChatSession.user_id == user_id,
+                ChatSession.deleted == 0,
+                exists().where(ChatMessage.session_id == ChatSession.id),
+            )
             .order_by(ChatSession.updated_at.desc())
         )
         return list((await self.session.execute(stmt)).scalars().all())

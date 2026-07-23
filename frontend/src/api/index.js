@@ -1,10 +1,33 @@
 import axios from 'axios'
 
 export const API_BASE_URL = '/api'
+export const AUTH_EXPIRED_CODE = 40100
 
 export const buildApiUrl = (path) => {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${API_BASE_URL}${normalizedPath}`
+}
+
+export const isAuthExpiredCode = (code) => Number(code) === AUTH_EXPIRED_CODE
+
+export const isAuthExpiredResponse = (data) => {
+  return data && typeof data === 'object' && isAuthExpiredCode(data.code)
+}
+
+export const handleAuthExpired = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
+
+  if (window.location.pathname !== '/login') {
+    window.location.replace('/login')
+  }
+}
+
+const createAuthExpiredError = (response) => {
+  const error = new Error(response?.data?.message || '登录已过期或无效')
+  error.isAuthExpired = true
+  error.response = response
+  return error
 }
 
 const apiClient = axios.create({
@@ -31,13 +54,16 @@ apiClient.interceptors.request.use(
 // 响应拦截器
 apiClient.interceptors.response.use(
   (response) => {
+    if (isAuthExpiredResponse(response.data)) {
+      handleAuthExpired()
+      return Promise.reject(createAuthExpiredError(response))
+    }
     return response
   },
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 || isAuthExpiredResponse(error.response?.data)) {
       // 未授权，清除本地存储的token
-      localStorage.removeItem('token')
-      window.location.href = '/login'
+      handleAuthExpired()
     }
     return Promise.reject(error)
   },

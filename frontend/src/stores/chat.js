@@ -43,6 +43,7 @@ export const useChatStore = defineStore('chat', () => {
     awaitingApproval: false,
     pendingApproval: null,
     hasLoadedMessages: false,
+    historyLoadError: '',
     previewPanelOpen: false,
     previewTabs: [],
     previewActivePath: '',
@@ -74,6 +75,9 @@ export const useChatStore = defineStore('chat', () => {
     }
     if (typeof state.selectedModel !== 'string' || !state.selectedModel) {
       state.selectedModel = DEFAULT_MODEL
+    }
+    if (typeof state.historyLoadError !== 'string') {
+      state.historyLoadError = ''
     }
     return state
   }
@@ -184,6 +188,10 @@ export const useChatStore = defineStore('chat', () => {
 
   const pendingApproval = computed(() => {
     return getConversationState(activeConversationKey.value)?.pendingApproval || null
+  })
+
+  const historyLoadError = computed(() => {
+    return getConversationState(activeConversationKey.value)?.historyLoadError || ''
   })
 
   const isNewConversation = computed(() => {
@@ -608,6 +616,7 @@ export const useChatStore = defineStore('chat', () => {
 
       const response = await getSessionHistory(sessionId)
       const dbMessages = response.data.data || []
+      state.historyLoadError = ''
 
       // 转换后端消息格式为前端格式
       state.messages = dbMessages.map((msg) => {
@@ -663,6 +672,7 @@ export const useChatStore = defineStore('chat', () => {
       console.error('加载会话历史失败:', error)
       state.messages = []
       state.hasLoadedMessages = false
+      state.historyLoadError = error?.response?.data?.message || error?.message || '会话历史加载失败'
       return []
     } finally {
       state.isLoading = false
@@ -756,6 +766,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     awaitingApproval,
     pendingApproval,
+    historyLoadError,
     sidebarCollapsed,
     needsReload,
     shouldFocusInput,

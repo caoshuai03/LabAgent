@@ -58,6 +58,7 @@ docker compose up -d --build
 ```
 
 访问 `http://localhost:8080`。使用宿主机 Ollama 时，将 `backend/.env` 中的 `OLLAMA_BASE_URL` 设置为 `http://host.docker.internal:11434`。
+如果 Docker 构建下载 Python 依赖超时，可在项目根目录 `.env` 中把 `PYPI_INDEX_URL` 改为可访问的内网 PyPI 镜像。
 
 ## 配置
 

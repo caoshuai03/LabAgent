@@ -23,4 +23,4 @@ class KbSourceVO(BaseModel):
 
     file_name: str | None
     snippet: str
-    score: float
+    score: float | None = None

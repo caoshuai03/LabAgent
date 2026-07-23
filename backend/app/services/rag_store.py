@@ -121,3 +121,8 @@ def build_hybrid_retriever(vector_top_k: int, bm25_top_k: int) -> BaseRetriever:
     if bm25_retriever is None:
         return vector_retriever
     return EnsembleRetriever(retrievers=[vector_retriever, bm25_retriever], weights=[0.5, 0.5])
+
+
+def build_vector_retriever(vector_top_k: int) -> BaseRetriever:
+    """构建纯向量检索器，供评测 baseline 使用。"""
+    return _get_vector_store().as_retriever(search_kwargs={"k": vector_top_k})

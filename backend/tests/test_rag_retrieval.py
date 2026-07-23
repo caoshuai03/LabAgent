@@ -36,6 +36,17 @@ class _SlowReranker:
         return documents
 
 
+class _FakeVectorRetriever:
+    """记录同步向量检索调用的假检索器。"""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def invoke(self, query: str) -> list[Document]:
+        self.queries.append(query)
+        return [Document(page_content="黄金证据", metadata={"source": "baseline.md"})]
+
+
 @pytest.mark.asyncio
 async def test_retrieve_uses_sync_retriever_in_thread(monkeypatch) -> None:
     """同步 PGVector 组合检索器必须通过 invoke 在线程中执行。"""
@@ -89,6 +100,39 @@ def test_local_query_rewrite_model_is_independent_from_rerank(monkeypatch) -> No
     assert model.model == "qwen3:4b"
     assert model.reasoning is False
     assert model.temperature == 0
+
+
+@pytest.mark.asyncio
+async def test_knowledge_tool_vector_only_uses_vector_retriever(monkeypatch) -> None:
+    """评测 baseline 模式应只走纯向量检索，不触发混合召回与 rerank。"""
+    called: dict[str, int] = {}
+    retriever = _FakeVectorRetriever()
+
+    def _build_vector_retriever(vector_top_k: int) -> _FakeVectorRetriever:
+        called["top_k"] = vector_top_k
+        return retriever
+
+    async def _unexpected_retrieve(query: str) -> list[Document]:
+        raise AssertionError("vector_only 不应调用混合召回")
+
+    async def _unexpected_rerank(query: str, documents: list[Document]) -> list[Document]:
+        raise AssertionError("vector_only 不应调用 rerank")
+
+    monkeypatch.setattr(knowledge_tool.rag_store, "build_vector_retriever", _build_vector_retriever)
+    monkeypatch.setattr(knowledge_tool.rag_retrieval, "retrieve", _unexpected_retrieve)
+    monkeypatch.setattr(knowledge_tool.rag_retrieval, "rerank", _unexpected_rerank)
+
+    result = await knowledge_tool.search_knowledge_base.coroutine(
+        query="实验三提交要求",
+        state={"rag_retrieval_mode": "vector_only", "rag_retrieval_top_k": 5},
+        tool_call_id="test-call",
+    )
+
+    payload = json.loads(result)
+    assert payload["success"] is True
+    assert payload["summary"] == "命中 1 条知识库资料"
+    assert called["top_k"] == 5
+    assert retriever.queries == ["实验三提交要求"]
 
 
 @pytest.mark.asyncio
