@@ -73,6 +73,14 @@ class SessionService:
         """刷新会话更新时间。"""
         await self.repo.touch(session_id)
 
+    async def update_title(self, session_id: uuid.UUID, user_id: int, title: str) -> bool:
+        """更新当前用户所属会话标题。"""
+        normalized_title = title.strip()[:_TITLE_MAX_LENGTH]
+        if not normalized_title:
+            return False
+        affected = await self.repo.update_title(session_id, user_id, normalized_title)
+        return affected > 0
+
     async def delete_sessions(self, session_ids: list[str], user_id: int) -> bool:
         """逻辑删除会话（仅限归属该用户），返回是否有删除。"""
         if not session_ids:

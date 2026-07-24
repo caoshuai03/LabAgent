@@ -104,9 +104,12 @@ const isRenaming = ref(false)
 const editTitle = ref('')
 const editInputRef = ref(null)
 
-const handleClick = () => {
+const handleClick = (event) => {
   if (props.isSelectionMode) {
-    emit('toggleSelect', props.conversation.id)
+    emit('toggleSelect', {
+      conversationId: props.conversation.id,
+      isShiftRange: event.shiftKey,
+    })
   } else if (!isRenaming.value) {
     emit('select', props.conversation.id)
   }

@@ -59,6 +59,12 @@ class Settings(BaseSettings):
 
     # 对话记忆窗口（用于 trim_messages 的最大消息条数）
     memory_max_messages: int = 20
+    # 新会话标题生成：失败或超时时自动保留首条消息截断标题
+    conversation_title_enabled: bool = True
+    conversation_title_model: str = ""
+    conversation_title_timeout_seconds: int = 8
+    conversation_title_max_chars: int = 30
+    conversation_title_assistant_context_chars: int = 500
 
     # 文件上传校验
     upload_max_size_mb: int = 100

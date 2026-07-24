@@ -17,6 +17,7 @@ from langgraph.types import Command
 from app.core.config import settings
 from app.db.session import async_session_factory
 from app.graph.chat_graph import get_chat_graph
+from app.services.conversation_title_service import ConversationTitleService
 from app.services.message_service import MessageService
 from app.services.session_service import SessionService
 from app.services.tool_call_service import ToolCallService
@@ -70,6 +71,7 @@ class AiService:
     def __init__(self) -> None:
         self._running_tasks: dict[str, tuple[int, str, asyncio.Task[Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._title_tasks: set[asyncio.Task[str | None]] = set()
 
     def _schedule_cancel_cleanup(self, trace_id: str) -> None:
         """在独立任务中清理已取消的工具记录，避免请求取消作用域中断数据库操作。"""
@@ -86,6 +88,22 @@ class AiService:
             logger.warning("Agent取消清理任务被中断")
         except Exception:  # noqa: BLE001 - 后台清理异常只记录日志
             logger.exception("Agent取消清理失败")
+
+    def _track_title_task(self, task: asyncio.Task[str | None]) -> asyncio.Task[str | None]:
+        """跟踪标题生成后台任务，避免请求结束后任务被提前回收。"""
+        self._title_tasks.add(task)
+        task.add_done_callback(self._handle_title_done)
+        return task
+
+    def _handle_title_done(self, task: asyncio.Task[str | None]) -> None:
+        """回收标题生成任务并记录未被消费的异常。"""
+        self._title_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("新会话标题生成任务被取消")
+        except Exception:  # noqa: BLE001 - 标题是辅助能力，异常仅记录
+            logger.exception("新会话标题生成任务异常")
 
     async def _cancel_running_tools(self, trace_id: str) -> None:
         """将指定运行中尚未结束的工具调用标记为已取消。"""
@@ -122,6 +140,29 @@ class AiService:
         except Exception:  # noqa: BLE001 - 异常兜底落库失败只能记录日志，避免覆盖原始错误
             logger.exception("Agent异常消息落库失败: session_id=%s, trace_id=%s", session_id, record_trace_id)
 
+    async def _generate_and_save_session_title(
+        self,
+        session_id: uuid.UUID,
+        user_id: int,
+        user_message: str,
+        assistant_answer: str,
+        model: str | None,
+    ) -> str | None:
+        """生成并保存新会话标题，失败时保留已有兜底标题。"""
+        if not settings.conversation_title_enabled:
+            return None
+        try:
+            title = await ConversationTitleService().generate_title(user_message, assistant_answer, model)
+            if not title:
+                return None
+            async with async_session_factory() as db:
+                updated = await SessionService(db).update_title(session_id, user_id, title)
+                await db.commit()
+            return title if updated else None
+        except Exception:  # noqa: BLE001 - 标题是辅助能力，失败不影响主对话
+            logger.warning("新会话标题生成失败: session_id=%s", session_id, exc_info=True)
+            return None
+
     async def stream_chat(
         self,
         message: str,
@@ -133,6 +174,7 @@ class AiService:
     ) -> AsyncGenerator[str, None]:
         """开始新的 Agent 运行。"""
         trace_id = uuid.uuid4().hex
+        is_new_session = not session_id
         try:
             async with async_session_factory() as db:
                 try:
@@ -169,6 +211,7 @@ class AiService:
             model=model,
             trace_id=trace_id,
             record_trace_id=trace_id,
+            title_source_message=message if is_new_session else None,
         ):
             yield event
 
@@ -233,6 +276,7 @@ class AiService:
         model: str | None,
         trace_id: str,
         record_trace_id: str,
+        title_source_message: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """执行或恢复图，把框架流转换为前端 SSE。"""
         started = time.monotonic()
@@ -248,9 +292,39 @@ class AiService:
         seen_tool_results: set[str] = set()
         paused = False
         sid = uuid.UUID(session_id)
+        title_task: asyncio.Task[str | None] | None = None
+        title_event_sent = False
         current_task = asyncio.current_task()
         if current_task is not None:
             self._running_tasks[trace_id] = (user_id, session_id, current_task)
+        if title_source_message:
+            title_task = self._track_title_task(
+                asyncio.create_task(
+                    self._generate_and_save_session_title(
+                        sid,
+                        user_id,
+                        title_source_message,
+                        "",
+                        model,
+                    )
+                )
+            )
+
+        def consume_completed_title_event() -> str | None:
+            """若标题任务已完成，生成一次 SSE 事件；未完成则不阻塞主输出。"""
+            nonlocal title_event_sent
+            if title_task is None or title_event_sent or not title_task.done():
+                return None
+            title_event_sent = True
+            title = title_task.result()
+            if not title:
+                return None
+            return _sse_event(
+                "session_title",
+                session_id,
+                trace_id,
+                {"session_id": session_id, "title": title},
+            )
 
         try:
             async with asyncio.timeout(settings.agent_timeout_seconds):
@@ -264,6 +338,9 @@ class AiService:
                             new_sources = chunk["sources"]
                             if new_sources:
                                 response_sources = _merge_sources(response_sources, new_sources)
+                                title_event = consume_completed_title_event()
+                                if title_event:
+                                    yield title_event
                                 yield _sse_event("sources", session_id, trace_id, {"sources": new_sources})
                         tool_event = chunk.get("tool_event") if isinstance(chunk, dict) else None
                         if isinstance(tool_event, dict):
@@ -272,6 +349,9 @@ class AiService:
                             if event_type == "tool_call" and payload.get("tool_call_id"):
                                 seen_tool_calls.add(str(payload["tool_call_id"]))
                             await self._persist_status_event(sid, payload)
+                            title_event = consume_completed_title_event()
+                            if title_event:
+                                yield title_event
                             yield _sse_event(event_type, session_id, trace_id, payload)
                         continue
 
@@ -284,6 +364,9 @@ class AiService:
                         content = token.content
                         if isinstance(content, str) and content:
                             full_response.append(content)
+                            title_event = consume_completed_title_event()
+                            if title_event:
+                                yield title_event
                             yield _sse_event("token", session_id, trace_id, {"content": content})
                         continue
 
@@ -372,6 +455,9 @@ class AiService:
                         for preview_field in ("preview_path", "preview_language", "preview_content"):
                             if result.get(preview_field) is not None:
                                 result_payload[preview_field] = result.get(preview_field)
+                        title_event = consume_completed_title_event()
+                        if title_event:
+                            yield title_event
                         yield _sse_event(
                             "tool_result",
                             session_id,
@@ -399,6 +485,9 @@ class AiService:
                                         )
                                 await db.commit()
                             approval_payload = {**payload, "interrupt_id": interrupt_id}
+                            title_event = consume_completed_title_event()
+                            if title_event:
+                                yield title_event
                             yield _sse_event("tool_approval_required", session_id, trace_id, approval_payload)
                             yield _sse_event(
                                 "paused",
@@ -414,6 +503,9 @@ class AiService:
 
             answer = "".join(full_response) or final_content
             if answer and not full_response:
+                title_event = consume_completed_title_event()
+                if title_event:
+                    yield title_event
                 yield _sse_event("token", session_id, trace_id, {"content": answer})
             if answer:
                 async with async_session_factory() as db:
@@ -427,6 +519,9 @@ class AiService:
                     await ToolCallService(db).link_message(record_trace_id, message.id)
                     await SessionService(db).touch(sid)
                     await db.commit()
+            title_event = consume_completed_title_event()
+            if title_event:
+                yield title_event
 
             logger.info(
                 "Agent对话完成: session_id=%s, trace_id=%s, answer_length=%d, cost=%dms",

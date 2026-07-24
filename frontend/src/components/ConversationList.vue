@@ -48,6 +48,7 @@ const route = useRoute()
 const chatStore = useChatStore()
 const openedMenuConversationId = ref(null)
 const isScrolling = ref(false)
+const lastSelectedConversationId = ref(null)
 let scrollbarHideTimer = null
 
 // 历史会话滚动条默认隐藏，滚动时短暂显示
@@ -88,20 +89,43 @@ const handleToggleMenu = ({ conversationId, nextOpen }) => {
   openedMenuConversationId.value = nextOpen ? conversationId : null
 }
 
-const handleToggleSelect = (conversationId) => {
+const handleToggleSelect = ({ conversationId, isShiftRange = false }) => {
   const newSelectedIds = [...props.selectedIds]
+  const currentIndex = chatStore.conversations.findIndex(
+    (conversation) => conversation.id === conversationId,
+  )
+
+  if (isShiftRange && lastSelectedConversationId.value) {
+    const lastIndex = chatStore.conversations.findIndex(
+      (conversation) => conversation.id === lastSelectedConversationId.value,
+    )
+
+    if (currentIndex !== -1 && lastIndex !== -1) {
+      const startIndex = Math.min(currentIndex, lastIndex)
+      const endIndex = Math.max(currentIndex, lastIndex)
+      const selectedSet = new Set(newSelectedIds)
+      chatStore.conversations.slice(startIndex, endIndex + 1).forEach((conversation) => {
+        selectedSet.add(conversation.id)
+      })
+      emit('update:selectedIds', [...selectedSet])
+      return
+    }
+  }
+
   const index = newSelectedIds.indexOf(conversationId)
   if (index === -1) {
     newSelectedIds.push(conversationId)
   } else {
     newSelectedIds.splice(index, 1)
   }
+  lastSelectedConversationId.value = conversationId
   emit('update:selectedIds', newSelectedIds)
 }
 
 // 进入批量删除模式
 const handleEnterBatchMode = () => {
   openedMenuConversationId.value = null
+  lastSelectedConversationId.value = null
   emit('enterBatchMode')
 }
 

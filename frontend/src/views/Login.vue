@@ -19,7 +19,7 @@
       <!-- 左侧品牌区 -->
       <section class="hero-panel">
         <div class="hero-brand">
-          <img class="hero-logo" :src="logoImage" alt="JavaLab Agent Logo" />
+          <img class="hero-logo" :src="logoImage" alt="Lab Agent Logo" />
         </div>
         <div class="hero-copy">
           <p class="hero-kicker">WELCOME</p>
@@ -28,13 +28,13 @@
             <span>Lab Agent</span>
           </h1>
           <p class="hero-subtitle">
-            一个好用的 Harness Agent。
+            一个面向教学实验的 Agentic RAG 平台。
           </p>
           <ul class="hero-features">
-            <li>MCP 与 Function Calling 协同，让 Agent 更智能</li>
-            <li>集成 Skills，扩展 Agent 能力</li>
-            <li>支持多模型切换，自动匹配最优模型</li>
-            <li>流式输出，实时响应，用户体验更好</li>
+            <li>支持 Agentic RAG 与三级检索实验</li>
+            <li>内置 RAGAS 评测与效果优化闭环</li>
+            <li>适配多种厂商大模型，支持自定义模型</li>
+            <li>提供沙箱隔离与工具安全控制</li>
           </ul>
         </div>
       </section>

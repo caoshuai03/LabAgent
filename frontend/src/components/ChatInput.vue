@@ -453,6 +453,12 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     return
   }
 
+  if (event.event_type === 'session_title') {
+    const sessionId = payload.session_id || event.session_id || streamTask.conversationKey
+    chatStore.renameConversation(sessionId, payload.title)
+    return
+  }
+
   if (
     event.event_type === 'tool_call' ||
     event.event_type === 'tool_result' ||
