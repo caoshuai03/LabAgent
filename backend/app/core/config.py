@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # 新会话标题生成：失败或超时时自动保留首条消息截断标题
     conversation_title_enabled: bool = True
     conversation_title_model: str = ""
-    conversation_title_timeout_seconds: int = 8
+    conversation_title_timeout_seconds: int = 60
     conversation_title_max_chars: int = 30
     conversation_title_assistant_context_chars: int = 500
 
