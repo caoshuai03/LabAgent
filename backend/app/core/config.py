@@ -45,7 +45,9 @@ class Settings(BaseSettings):
 
     # 模型服务
     ollama_base_url: str = "http://localhost:11434"
-    ollama_chat_model: str = "qwen3:8b"
+    ollama_base_urls: str = ""
+    ollama_retry_other_endpoint_on_failure: bool = False
+    ollama_chat_model: str = "qwen3.5:35b"
     ollama_embedding_model: str = "turingdance/gte-large-zh:latest"
     # 嵌入模型请求超时（秒）：Ollama 不可达时快速失败以触发检索降级，避免拖死整个对话
     ollama_embedding_timeout: int = 120
@@ -71,6 +73,7 @@ class Settings(BaseSettings):
     conversation_title_timeout_seconds: int = 60
     conversation_title_max_chars: int = 30
     conversation_title_assistant_context_chars: int = 500
+    conversation_title_num_predict: int = 32
 
     # 文件上传校验
     upload_max_size_mb: int = 100

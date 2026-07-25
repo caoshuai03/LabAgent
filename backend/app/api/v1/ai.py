@@ -13,6 +13,7 @@ from app.core.errors import BusinessException, ErrorCode
 from app.schemas.chat import (
     ChatMessageVO,
     ChatRequest,
+    ConversationTitleVO,
     DeleteSessionRequest,
     HistoryRequest,
 )
@@ -139,6 +140,16 @@ async def list_sessions(current_user: CurrentUser, db: DbSession) -> BaseRespons
     """获取当前用户的会话列表。"""
     sessions = await SessionService(db).list_sessions_by_user(current_user.id)
     return success(sessions)
+
+
+@router.get("/rag/sessions/{session_id}/title")
+async def get_session_title(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> BaseResponse[ConversationTitleVO]:
+    """查询当前用户所属会话的标题。"""
+    return success(await SessionService(db).get_title(session_id, current_user.id))
 
 
 @router.post("/rag/sessions/delete")

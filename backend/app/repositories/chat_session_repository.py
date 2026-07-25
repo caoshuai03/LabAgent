@@ -59,6 +59,26 @@ class ChatSessionRepository:
         )
         return result.rowcount or 0
 
+    async def update_generated_title(
+        self,
+        session_id: uuid.UUID,
+        user_id: int,
+        expected_title: str | None,
+        generated_title: str,
+    ) -> int:
+        """仅在标题未被其他操作修改时写入生成结果。"""
+        result = await self.session.execute(
+            update(ChatSession)
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == user_id,
+                ChatSession.deleted == 0,
+                ChatSession.title == expected_title,
+            )
+            .values(title=generated_title)
+        )
+        return result.rowcount or 0
+
     async def logical_delete(self, session_ids: list[uuid.UUID], user_id: int) -> int:
         """逻辑删除会话（仅限归属该用户），返回影响行数。"""
         result = await self.session.execute(

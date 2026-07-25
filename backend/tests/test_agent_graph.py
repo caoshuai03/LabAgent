@@ -115,7 +115,11 @@ async def test_agent_executes_file_tool(graph_environment, monkeypatch) -> None:
         tool_args={"file_path": "output/test.txt", "text": "hello", "append": False},
         tool_call_id="call-write",
     )
-    monkeypatch.setattr(chat_graph.model_provider, "get_chat_model", lambda model_name=None: model)
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
     graph = chat_graph._build_graph()
     session_id = str(uuid.uuid4())
 
@@ -153,7 +157,11 @@ async def test_agent_only_rejects_invalid_tool_call(graph_environment, monkeypat
             },
         ]
     )
-    monkeypatch.setattr(chat_graph.model_provider, "get_chat_model", lambda model_name=None: model)
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
     graph = chat_graph._build_graph()
     session_id = str(uuid.uuid4())
 
@@ -198,7 +206,11 @@ async def test_rejected_delete_does_not_remove_file(graph_environment, monkeypat
         tool_args={"commands": "rm output/delete.txt"},
         tool_call_id="call-delete",
     )
-    monkeypatch.setattr(chat_graph.model_provider, "get_chat_model", lambda model_name=None: model)
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
     graph = chat_graph._build_graph()
     session_id = str(uuid.uuid4())
     workspace = workspace_manager.ensure_workspace(1, session_id)

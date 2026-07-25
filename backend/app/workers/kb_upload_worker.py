@@ -5,6 +5,7 @@
 """
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -14,14 +15,62 @@ from langchain_core.documents import Document
 from app.core.config import settings
 from app.db.session import async_session_factory
 from app.models.knowledge_status import KbFileStatus, KbUploadTaskStage, KbUploadTaskStatus
+from app.repositories.chat_session_repository import ChatSessionRepository
 from app.repositories.kb_file_repository import KbFileRepository
 from app.repositories.kb_upload_task_repository import KbUploadTaskRepository
 from app.services import document_loader, document_splitter, rag_store
+from app.services.conversation_title_service import ConversationTitleService
 from app.services.kb_upload_queue import enqueue_kb_upload
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger("labagent")
 _MAX_ERROR_MESSAGE_LENGTH = 2000
+
+
+async def process_conversation_title(
+    _ctx: dict[str, Any],
+    session_id: str,
+    user_id: int,
+    user_message: str,
+    assistant_answer: str,
+    model: str | None,
+) -> None:
+    """在主回答结束后异步生成并安全更新会话标题。"""
+    parsed_session_id = uuid.UUID(session_id)
+    async with async_session_factory() as session:
+        repo = ChatSessionRepository(session)
+        chat_session = await repo.get_by_id(parsed_session_id)
+        if (
+            chat_session is None
+            or chat_session.user_id != user_id
+            or chat_session.deleted == 1
+        ):
+            return
+        expected_title = chat_session.title
+
+    try:
+        title = await ConversationTitleService().generate_title(
+            user_message,
+            assistant_answer,
+            model,
+        )
+        if not title:
+            return
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - 标题任务失败只记录日志并保留兜底标题
+        logger.warning("新会话标题生成失败: session_id=%s", session_id, exc_info=True)
+        return
+
+    async with async_session_factory() as session:
+        repo = ChatSessionRepository(session)
+        await repo.update_generated_title(
+            parsed_session_id,
+            user_id,
+            expected_title,
+            title,
+        )
+        await session.commit()
 
 
 async def _update_stage(
@@ -186,7 +235,7 @@ async def process_kb_upload(_ctx: dict[str, Any], task_id: int) -> None:
 class WorkerSettings:
     """ARQ Worker 配置。"""
 
-    functions = [process_kb_upload]
+    functions = [process_kb_upload, process_conversation_title]
     on_startup = recover_stale_tasks
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     queue_name = settings.arq_queue_name

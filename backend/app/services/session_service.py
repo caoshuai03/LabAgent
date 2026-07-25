@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BusinessException, ErrorCode
 from app.models.chat_session import ChatSession
 from app.repositories.chat_session_repository import ChatSessionRepository
-from app.schemas.chat import ChatSessionVO
+from app.schemas.chat import ChatSessionVO, ConversationTitleVO
 
 # 会话标题从首条用户消息截断的最大长度
 _TITLE_MAX_LENGTH = 30
@@ -59,6 +59,14 @@ class SessionService:
             )
             for s in sessions
         ]
+
+    async def get_title(self, session_id: str, user_id: int) -> ConversationTitleVO:
+        """查询当前用户所属会话的标题。"""
+        chat_session = await self.get_owned_session(session_id, user_id)
+        return ConversationTitleVO(
+            session_id=str(chat_session.id),
+            title=chat_session.title,
+        )
 
     async def get_owned_session(self, session_id: str, user_id: int) -> ChatSession:
         """获取当前用户所属的未删除会话。"""

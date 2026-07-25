@@ -207,11 +207,15 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
 }
 
 .message-list {
   flex: 1;
+  min-width: 0;
+  width: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 60px 0 32px 0;

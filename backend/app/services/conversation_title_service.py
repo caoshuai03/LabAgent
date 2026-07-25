@@ -40,8 +40,7 @@ class ConversationTitleService:
         """根据首轮对话生成短标题，异常交由调用方兜底。"""
         if not settings.conversation_title_enabled:
             return None
-        model_name = settings.conversation_title_model or model
-        chat_model = model_provider.get_chat_model(model_name)
+        chat_model = model_provider.get_conversation_title_model(model)
         assistant_summary = assistant_answer[: settings.conversation_title_assistant_context_chars]
         chain = _TITLE_PROMPT | chat_model
         async with asyncio.timeout(settings.conversation_title_timeout_seconds):

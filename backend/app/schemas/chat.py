@@ -51,3 +51,10 @@ class ChatSessionVO(BaseModel):
     title: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationTitleVO(BaseModel):
+    """会话标题。"""
+
+    session_id: str
+    title: str | None

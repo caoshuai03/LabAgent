@@ -103,7 +103,7 @@ def _build_graph() -> CompiledStateGraph:
         )
         configurable = config.get("configurable") or {}
         model_name = configurable.get("model") or state.get("model_name")
-        chat_model = model_provider.get_chat_model(model_name)
+        chat_model = model_provider.get_chat_model(model_name, operation_name="agent")
         round_number = int(state.get("tool_round", 0))
         tools = tool_registry.model_tools()
         if round_number >= settings.agent_max_tool_rounds:

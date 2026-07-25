@@ -382,6 +382,8 @@ watch(
 
 <style lang="scss" scoped>
 .message-item {
+  min-width: 0;
+  width: 100%;
   padding: 24px 0;
 
   &.message-user {
@@ -439,6 +441,8 @@ watch(
 
 .message-container {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-content {
@@ -449,11 +453,13 @@ watch(
 }
 
 .message-text {
+  min-width: 0;
+  max-width: 100%;
   padding: 10px 16px 8px;
   border-radius: 12px;
   line-height: 1.6;
   font-size: 15px;
-  word-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: normal;
 
   @media (max-width: 768px) {
@@ -531,6 +537,9 @@ watch(
   }
 
   :deep(.code-block-wrapper) {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin: 1em 0;
     border-radius: 14px;
     overflow: hidden;
@@ -586,13 +595,18 @@ watch(
     }
 
     pre {
+      width: 100%;
+      max-width: 100%;
       margin: 0;
       padding: 14px 16px 18px;
       border-radius: 0;
       overflow-x: auto;
+      overflow-y: hidden;
       background-color: transparent;
 
       code {
+        width: max-content;
+        min-width: 100%;
         padding: 0;
         background-color: transparent;
         font-size: 0.92em;
@@ -602,6 +616,7 @@ watch(
           'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', 'Monaco', 'Courier New',
           monospace;
         display: block;
+        white-space: pre;
       }
     }
   }
@@ -626,33 +641,46 @@ watch(
     }
   }
 
-  :deep(table) {
-    border-collapse: collapse;
+  :deep(.markdown-table-wrapper) {
+    max-width: 100%;
     margin: 1em 0;
     width: 100%;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    overflow: hidden;
+    overflow-x: auto;
+    border: 1px solid var(--border-color, #e5e5e5);
+    border-radius: 10px;
+    background: transparent;
+  }
+
+  :deep(table) {
+    width: 100%;
+    min-width: 560px;
+    margin: 0;
+    border-spacing: 0;
+    border-collapse: separate;
+    font-size: 14px;
 
     th,
     td {
-      padding: 12px 16px;
-      border: 1px solid var(--border-color);
+      padding: 10px 12px;
+      border: 0;
+      border-bottom: 1px solid var(--border-color, #e5e5e5);
       text-align: left;
+      vertical-align: top;
+
+      & + th,
+      & + td {
+        border-left: 1px solid var(--border-color, #e5e5e5);
+      }
     }
 
     th {
-      background-color: var(--bg-hover);
+      background-color: rgba(0, 0, 0, 0.025);
       font-weight: 600;
       color: var(--text-primary);
     }
 
-    tr:nth-child(even) {
-      background-color: var(--bg-secondary);
-    }
-
-    tr:hover {
-      background-color: var(--bg-hover);
+    tbody tr:last-child td {
+      border-bottom: 0;
     }
   }
 

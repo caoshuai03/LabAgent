@@ -31,8 +31,6 @@ cp .env.example backend/.env
 docker compose up -d --build
 ```
 
-访问 `http://localhost:8080`。使用宿主机 Ollama 时，将 `backend/.env` 中的 `OLLAMA_BASE_URL` 设置为 `http://host.docker.internal:11434`。
-如果 Docker 构建下载 Python 依赖超时，可在项目根目录 `.env` 中把 `PYPI_INDEX_URL` 改为可访问的内网 PyPI 镜像。
 
 ### 本地开发
 
@@ -72,18 +70,6 @@ npm run dev
 ## 配置
 
 完整配置见 [.env.example](.env.example)。部署前至少需要确认模型配置，并替换 `JWT_SECRET_KEY` 等默认敏感值。
-
-RAG 默认使用原问题 + 2 个 MultiQuery 改写做向量/BM25 混合召回，最终 rerank 保留 20 条上下文；可通过 `RAG_MULTI_QUERY_COUNT`、`RAG_TOP_K`、`RAG_BM25_TOP_K`、`RAG_RERANK_TOP_N` 调整。
-
-Shell 工具默认关闭。启用时需同时设置 `SHELL_TOOL_ENABLED=true` 和高强度 `TOOL_RUNNER_TOKEN`，并仅向可信管理员开放。
-
-知识库上传采用异步任务：`POST /api/v1/knowledge/file/upload` 在 MinIO 与任务记录提交后返回任务；Worker 后台执行解析、切分和向量化。可通过以下接口查询和重试：
-
-- `GET /api/v1/knowledge/upload-tasks?active_only=true`：查询活动任务。
-- `GET /api/v1/knowledge/upload-tasks/{task_id}`：查询单个任务。
-- `POST /api/v1/knowledge/upload-tasks/{task_id}/retry`：重试失败任务。
-
-普通用户仅能查看或重试自己的任务，管理员可操作全部任务。同步更新接口 `POST /api/v1/knowledge/file/update` 保持原有处理方式。
 
 ## 文档
 

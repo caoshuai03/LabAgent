@@ -47,7 +47,7 @@
     <ChatInput ref="chatInputRef" />
 
     <div class="footer-container">
-      <p>以上内容均由AI生成, 仅供参考和借鉴。版权所有 © shuaicao01@163.com</p>
+      <p>以上内容均由 AI 生成, 仅供参考和借鉴。版权所有 © shuaicao01@163.com</p>
     </div>
   </div>
 </template>

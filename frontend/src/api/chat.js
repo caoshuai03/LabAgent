@@ -15,6 +15,16 @@ export const getUserSessions = () => {
 }
 
 /**
+ * 获取单个会话的标题
+ * @param {string} sessionId - 会话ID
+ * @param {AbortSignal} signal - 取消轮询信号
+ * @returns {Promise} 会话标题
+ */
+export const getSessionTitle = (sessionId, signal) => {
+  return apiClient.get(`/v1/ai/rag/sessions/${sessionId}/title`, { signal })
+}
+
+/**
  * 获取会话的历史消息
  * @param {string} sessionId - 会话ID
  * @param {number} userId - 用户ID（用于权限校验）

@@ -136,7 +136,12 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
-import { cancelReactAgent, resumeReactAgent, sendReactAgentMessage } from '../api/chat'
+import {
+  cancelReactAgent,
+  getSessionTitle,
+  resumeReactAgent,
+  sendReactAgentMessage,
+} from '../api/chat'
 import { AVAILABLE_MODELS } from '../constants/models'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
 
@@ -158,6 +163,8 @@ const TOOL_FAILURE_STAGES = new Set([
   'tool_rejected',
   'tool_cancelled',
 ])
+const TITLE_POLL_INTERVAL_MS = 1000
+const TITLE_POLL_MAX_ATTEMPTS = 65
 
 const availableModels = AVAILABLE_MODELS
 
@@ -193,6 +200,53 @@ const selectModel = (model) => {
 
 // 每个会话独立维护自己的流任务，避免切换历史会话时互相覆盖
 const streamTasks = new Map()
+const titlePollControllers = new Map()
+
+const waitForTitlePoll = (signal) => {
+  return new Promise((resolve) => {
+    const timeoutId = window.setTimeout(resolve, TITLE_POLL_INTERVAL_MS)
+    signal.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timeoutId)
+        resolve()
+      },
+      { once: true },
+    )
+  })
+}
+
+const pollConversationTitle = async (sessionId, fallbackTitle) => {
+  if (!sessionId) return
+
+  titlePollControllers.get(sessionId)?.abort()
+  const controller = new AbortController()
+  titlePollControllers.set(sessionId, controller)
+
+  try {
+    for (let attempt = 0; attempt < TITLE_POLL_MAX_ATTEMPTS; attempt += 1) {
+      await waitForTitlePoll(controller.signal)
+      if (controller.signal.aborted) return
+
+      try {
+        const response = await getSessionTitle(sessionId, controller.signal)
+        const titleResult = response.data.data
+        if (titleResult?.title) {
+          chatStore.renameConversation(sessionId, titleResult.title)
+          if (titleResult.title !== fallbackTitle) {
+            return
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return
+      }
+    }
+  } finally {
+    if (titlePollControllers.get(sessionId) === controller) {
+      titlePollControllers.delete(sessionId)
+    }
+  }
+}
 
 const getOrCreateActiveConversationKey = () => {
   return chatStore.activeConversationKey || chatStore.createConversation()
@@ -407,6 +461,8 @@ const handleSend = async () => {
     conversationKey,
     currentUserMessage: message,
     sessionIdReceived: false,
+    shouldPollTitle: chatStore.isDraftConversationKey(conversationKey),
+    fallbackTitle: message.slice(0, 30),
     abortController: null,
     traceId: null,
     paused: false,
@@ -523,6 +579,9 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
   if (event.event_type === 'final') {
     streamTask.paused = false
     chatStore.clearPendingApproval(streamTask.conversationKey)
+    if (streamTask.shouldPollTitle) {
+      void pollConversationTitle(streamTask.conversationKey, streamTask.fallbackTitle)
+    }
     void finalizeStreamTask(streamTask.conversationKey, { refreshConversations: true })
   }
 }
@@ -610,6 +669,8 @@ onUnmounted(() => {
     chatStore.setConversationLoading(conversationKey, false)
   })
   streamTasks.clear()
+  titlePollControllers.forEach((controller) => controller.abort())
+  titlePollControllers.clear()
 })
 </script>
 

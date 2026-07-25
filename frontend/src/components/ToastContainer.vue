@@ -75,9 +75,6 @@ const iconOf = (type) => {
     0 10px 30px rgba(0, 0, 0, 0.1),
     0 2px 8px rgba(0, 0, 0, 0.05);
 
-  &.actionable {
-    border-color: rgba(144, 19, 139, 0.24);
-  }
 }
 
 .toast-icon {

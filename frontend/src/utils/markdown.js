@@ -14,6 +14,10 @@ const md = new MarkdownIt({
 // 误判成外链，从而抢占产物路径超链接并触发错误跳转；仅保留带 http(s):// 协议的显式链接自动识别
 md.linkify.set({ fuzzyLink: false, fuzzyEmail: false })
 
+// 表格由外层容器负责横向滚动，保留 table 原生布局，避免窄屏时列宽被破坏
+md.renderer.rules.table_open = () => '<div class="markdown-table-wrapper"><table>\n'
+md.renderer.rules.table_close = () => '</table></div>\n'
+
 // 自定义代码块渲染规则，避免 markdown-it 自动包裹 <pre>
 md.renderer.rules.fence = function (tokens, idx) {
   const token = tokens[idx]
