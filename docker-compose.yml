@@ -1,6 +1,6 @@
 # @author: caoshuai.cs
 # @date: 2026-07-12
-# @description: LabAgent 一键编排：PostgreSQL(pgvector) + MinIO + 后端
+# @description: LabAgent 一键编排：PostgreSQL(pgvector) + Redis + MinIO + 后端 + ARQ Worker
 services:
   postgres:
     image: ankane/pgvector
@@ -15,6 +15,19 @@ services:
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -43,6 +56,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -53,6 +68,10 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
       MINIO_BUCKET: ${MINIO_BUCKET:-labagent}
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: ${ARQ_QUEUE_NAME:-kb_upload}
+      ARQ_JOB_TIMEOUT_SECONDS: ${ARQ_JOB_TIMEOUT_SECONDS:-1800}
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-2}
       TOOL_WORKSPACE_ROOT: /data/tool-workspaces
       TOOL_RUNNER_BASE_URL: http://tool-runner:8990
       TOOL_RUNNER_TOKEN: ${TOOL_RUNNER_TOKEN:-}
@@ -63,6 +82,37 @@ services:
       - tool_internal
     ports:
       - "8989:8989"
+
+  kb-worker:
+    build:
+      context: ./backend
+      args:
+        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    command: ["/app/.venv/bin/arq", "app.workers.kb_upload_worker.WorkerSettings"]
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-labagent}
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: ${ARQ_QUEUE_NAME:-kb_upload}
+      ARQ_JOB_TIMEOUT_SECONDS: ${ARQ_JOB_TIMEOUT_SECONDS:-1800}
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-2}
+    restart: unless-stopped
 
   tool-runner:
     build:
@@ -97,6 +147,7 @@ services:
 
 volumes:
   pg_data:
+  redis_data:
   minio_data:
   tool_workspaces:
 

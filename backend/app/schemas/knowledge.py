@@ -14,8 +14,32 @@ class KbFileVO(BaseModel):
     id: int
     file_name: str | None
     url: str | None
+    status: str
+    task_id: int | None = None
+    stage: str | None = None
+    total_chunks: int | None = None
+    error_message: str | None = None
     create_time: datetime | None
     update_time: datetime | None
+
+
+class KbUploadTaskVO(BaseModel):
+    """知识库异步上传任务返回体。"""
+
+    task_id: int
+    kb_file_id: int
+    file_name: str | None
+    user_id: int
+    status: str
+    stage: str
+    file_status: str
+    total_chunks: int | None
+    attempt_count: int
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    updated_at: datetime
 
 
 class KbSourceVO(BaseModel):

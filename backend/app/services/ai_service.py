@@ -326,8 +326,26 @@ class AiService:
                 {"session_id": session_id, "title": title},
             )
 
+        async def wait_for_title_event() -> str | None:
+            """主回答结束时等待并发送标题，避免标题落库晚于前端最后一次刷新。"""
+            nonlocal title_event_sent
+            if title_task is None or title_event_sent:
+                return None
+            title_event_sent = True
+            title = await title_task
+            if not title:
+                return None
+            return _sse_event(
+                "session_title",
+                session_id,
+                trace_id,
+                {"session_id": session_id, "title": title},
+            )
+
         try:
-            async with asyncio.timeout(settings.agent_timeout_seconds):
+            async with asyncio.timeout(
+                settings.agent_timeout_seconds + settings.conversation_title_timeout_seconds
+            ):
                 async for stream_mode, chunk in graph.astream(
                     graph_input,
                     config=config,
@@ -520,6 +538,8 @@ class AiService:
                     await SessionService(db).touch(sid)
                     await db.commit()
             title_event = consume_completed_title_event()
+            if title_event is None:
+                title_event = await wait_for_title_event()
             if title_event:
                 yield title_event
 

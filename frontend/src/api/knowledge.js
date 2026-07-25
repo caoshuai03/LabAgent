@@ -9,12 +9,42 @@ export const knowledgeApi = {
    * @param {FormData} formData - 包含文件的FormData对象
    * @returns {Promise} 上传结果
    */
-  uploadFiles: (formData) => {
+  uploadFiles: (formData, onUploadProgress) => {
     return apiClient.post('/v1/knowledge/file/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress,
     })
+  },
+
+  /**
+   * 查询上传任务
+   * @param {boolean} activeOnly - 是否只查询未结束任务
+   * @returns {Promise} 上传任务列表
+   */
+  getUploadTasks: (activeOnly = true) => {
+    return apiClient.get('/v1/knowledge/upload-tasks', {
+      params: { active_only: activeOnly },
+    })
+  },
+
+  /**
+   * 查询单个上传任务
+   * @param {string|number} taskId - 上传任务 ID
+   * @returns {Promise} 上传任务
+   */
+  getUploadTask: (taskId) => {
+    return apiClient.get(`/v1/knowledge/upload-tasks/${encodeURIComponent(taskId)}`)
+  },
+
+  /**
+   * 重试失败的上传任务
+   * @param {string|number} taskId - 上传任务 ID
+   * @returns {Promise} 重试后的上传任务
+   */
+  retryUploadTask: (taskId) => {
+    return apiClient.post(`/v1/knowledge/upload-tasks/${encodeURIComponent(taskId)}/retry`)
   },
 
   /**

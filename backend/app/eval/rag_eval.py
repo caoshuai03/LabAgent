@@ -32,7 +32,7 @@ logger = logging.getLogger("labagent")
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CASE_PATH = _PROJECT_ROOT / "docs/rag_eval/RAG评测集样例.md"
 _DEFAULT_REPORT_DIR = _PROJECT_ROOT / "docs/rag_eval/reports"
-_DEFAULT_TOP_K = 5
+_DEFAULT_TOP_K = 20
 _DEFAULT_EVAL_USER_ID = 1
 _ANSWER_MODEL_NAME = settings.azure_chat_model
 _JUDGE_MODEL_NAME = settings.azure_chat_model
@@ -117,6 +117,16 @@ class EvaluationReport:
     generated_at: str
     baseline: MethodSummary
     current: MethodSummary
+    current_without_rerank: MethodSummary | None = None
+    top_k: int = _DEFAULT_TOP_K
+
+
+def _method_summaries(report: EvaluationReport) -> list[MethodSummary]:
+    """按报告展示顺序返回所有方法结果，兼容旧版两组 JSON。"""
+    summaries = [report.baseline, report.current]
+    if report.current_without_rerank is not None:
+        summaries.append(report.current_without_rerank)
+    return summaries
 
 
 def _resolve_input_path(path_value: str | Path) -> Path:
@@ -379,14 +389,18 @@ async def _run_forced_retrieval_answer(
     user_id: int,
     retrieval_mode: str,
     top_k: int,
+    use_rerank: bool = True,
 ) -> tuple[str, list[str], str]:
     """评测专用：强制执行检索分支，再基于检索结果生成回答。"""
     if retrieval_mode == "vector_only":
         retriever = rag_store.build_vector_retriever(top_k)
         documents = await asyncio.to_thread(lambda: list(retriever.invoke(question)))
     else:
-        documents = await rag_retrieval.retrieve(question)
-        documents = await rag_retrieval.rerank(question, documents)
+        if use_rerank:
+            documents = await rag_retrieval.retrieve(question)
+            documents = await rag_retrieval.rerank(question, documents)
+        else:
+            documents = await rag_retrieval.retrieve_with_query_rrf(question)
         documents = documents[:top_k]
 
     contexts: list[str] = []
@@ -420,19 +434,30 @@ async def _build_method_results(
     judge_model_name: str,
     user_id: int,
     force_retrieval: bool,
+    use_rerank: bool = True,
 ) -> MethodSummary:
     """跑单种方法的完整链路。"""
     case_results: list[MethodCaseResult] = []
     recall_scores: list[float] = []
     run_answer = _run_forced_retrieval_answer if force_retrieval else _run_agent_answer
     for case in cases:
-        response, retrieved_contexts, first_source = await run_answer(
-            case.user_input,
-            model_name=answer_model_name,
-            user_id=user_id,
-            retrieval_mode=retrieval_mode,
-            top_k=top_k,
-        )
+        if force_retrieval:
+            response, retrieved_contexts, first_source = await run_answer(
+                case.user_input,
+                model_name=answer_model_name,
+                user_id=user_id,
+                retrieval_mode=retrieval_mode,
+                top_k=top_k,
+                use_rerank=use_rerank,
+            )
+        else:
+            response, retrieved_contexts, first_source = await run_answer(
+                case.user_input,
+                model_name=answer_model_name,
+                user_id=user_id,
+                retrieval_mode=retrieval_mode,
+                top_k=top_k,
+            )
         retrieved_contexts = retrieved_contexts[:top_k]
         recall_hit = await _judge_recall_at_k(case.user_input, case.reference_context, retrieved_contexts, judge_model_name)
         recall_score = 1.0 if recall_hit else 0.0
@@ -641,6 +666,7 @@ def _build_ragas_status(method_label: str, summary: MethodSummary) -> str:
 
 def build_markdown_report(report: EvaluationReport) -> str:
     """生成最终 Markdown 报告。"""
+    recall_label = f"Recall@{report.top_k}"
     lines: list[str] = [
         "<!--",
         " @author: caoshuai.cs",
@@ -654,10 +680,9 @@ def build_markdown_report(report: EvaluationReport) -> str:
         "",
         "## 1. 总体结果",
         "",
-        "| 方法 | Recall@5 | ContextPrecision | ContextRecall | Faithfulness | ResponseRelevancy | AnswerCorrectness |",
+        f"| 方法 | {recall_label} | ContextPrecision | ContextRecall | Faithfulness | ResponseRelevancy | AnswerCorrectness |",
         "| --- | --- | --- | --- | --- | --- | --- |",
-        _build_summary_table(report.baseline),
-        _build_summary_table(report.current),
+        *[_build_summary_table(summary) for summary in _method_summaries(report)],
         "",
     ]
 
@@ -667,23 +692,29 @@ def build_markdown_report(report: EvaluationReport) -> str:
             "",
         ]
     )
-    lines.append(_build_ragas_status("纯向量检索 baseline", report.baseline))
-    lines.append(_build_ragas_status("当前检索链路", report.current))
+    for summary in _method_summaries(report):
+        lines.append(_build_ragas_status(summary.method_name, summary))
     lines.append("")
 
     lines.extend(
         [
             "## 3. 逐题对比",
             "",
-            "| id | 问题 | baseline Recall@5 | current Recall@5 | baseline 来源 | current 来源 |",
-            "| --- | --- | --- | --- | --- | --- |",
+            f"| id | 问题 | baseline {recall_label} | current_with_rerank {recall_label} | current_without_rerank {recall_label} | baseline 来源 | current_with_rerank 来源 | current_without_rerank 来源 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
-    for baseline_record, current_record in zip(report.baseline.case_results, report.current.case_results, strict=False):
+    without_records = report.current_without_rerank.case_results if report.current_without_rerank else []
+    for baseline_record, current_record, without_record in zip(
+        report.baseline.case_results,
+        report.current.case_results,
+        without_records,
+        strict=False,
+    ):
         lines.append(
             f"| {baseline_record.case_id} | {baseline_record.user_input} | "
-            f"{_format_score(baseline_record.recall_at_5)} | {_format_score(current_record.recall_at_5)} | "
-            f"{baseline_record.first_source or '—'} | {current_record.first_source or '—'} |"
+            f"{_format_score(baseline_record.recall_at_5)} | {_format_score(current_record.recall_at_5)} | {_format_score(without_record.recall_at_5)} | "
+            f"{baseline_record.first_source or '—'} | {current_record.first_source or '—'} | {without_record.first_source or '—'} |"
         )
 
     lines.extend(
@@ -694,14 +725,14 @@ def build_markdown_report(report: EvaluationReport) -> str:
         ]
     )
     failed_records = [
-        (b, c)
-        for b, c in zip(report.baseline.case_results, report.current.case_results, strict=False)
-        if b.recall_at_5 != c.recall_at_5 or b.recall_at_5 == 0.0 or c.recall_at_5 == 0.0
+        (b, c, w)
+        for b, c, w in zip(report.baseline.case_results, report.current.case_results, without_records, strict=False)
+        if len({b.recall_at_5, c.recall_at_5, w.recall_at_5}) > 1 or b.recall_at_5 == 0.0 or c.recall_at_5 == 0.0 or w.recall_at_5 == 0.0
     ]
     if not failed_records:
         lines.append("本次没有明显失败样例。")
     else:
-        for baseline_record, current_record in failed_records:
+        for baseline_record, current_record, without_record in failed_records:
             lines.extend(
                 [
                     f"### {baseline_record.case_id}",
@@ -709,7 +740,8 @@ def build_markdown_report(report: EvaluationReport) -> str:
                     f"- 标准答案：{baseline_record.reference}",
                     f"- 黄金证据：{baseline_record.reference_context}",
                     f"- baseline 答案：{baseline_record.response}",
-                    f"- current 答案：{current_record.response}",
+                    f"- current_with_rerank 答案：{current_record.response}",
+                    f"- current_without_rerank 答案：{without_record.response}",
                     "",
                 ]
             )
@@ -765,6 +797,8 @@ def load_evaluation_report(path_value: str | Path) -> EvaluationReport:
         generated_at=str(item.get("generated_at") or ""),
         baseline=_load_method_summary(item["baseline"]),
         current=_load_method_summary(item["current"]),
+        current_without_rerank=_load_method_summary(item["current_without_rerank"]) if item.get("current_without_rerank") else None,
+        top_k=int(item.get("top_k") or _DEFAULT_TOP_K),
     )
 
 
@@ -780,7 +814,7 @@ def limit_evaluation_report(report: EvaluationReport, limit_cases: int) -> None:
     """限制报告参与后续补跑的样例数。"""
     if limit_cases <= 0:
         return
-    for summary in (report.baseline, report.current):
+    for summary in _method_summaries(report):
         summary.case_results = summary.case_results[:limit_cases]
         summary.recall_at_5 = _mean_or_zero([record.recall_at_5 for record in summary.case_results])
         summary.ragas_metrics = None
@@ -795,27 +829,15 @@ async def fill_ragas_metrics(
     batch_size: int = 1,
 ) -> None:
     """基于已有回答结果补跑 RAGAS 指标。"""
-    baseline_metrics, baseline_error = await run_ragas_metrics(
-        report.baseline.case_results,
-        judge_model_name,
-        ragas_llm_only,
-        batch_size,
-    )
-    current_metrics, current_error = await run_ragas_metrics(
-        report.current.case_results,
-        judge_model_name,
-        ragas_llm_only,
-        batch_size,
-    )
-    report.baseline.ragas_metrics = baseline_metrics
-    report.baseline.ragas_error = baseline_error
-    report.current.ragas_metrics = current_metrics
-    report.current.ragas_error = current_error
+    for summary in _method_summaries(report):
+        metrics, error = await run_ragas_metrics(summary.case_results, judge_model_name, ragas_llm_only, batch_size)
+        summary.ragas_metrics = metrics
+        summary.ragas_error = error
 
 
 async def recompute_recall_metrics(report: EvaluationReport, judge_model_name: str) -> None:
-    """基于已有召回上下文重新计算 Recall@5 和命中标记。"""
-    for summary in (report.baseline, report.current):
+    """基于已有召回上下文重新计算 Recall@K 和命中标记。"""
+    for summary in _method_summaries(report):
         recall_scores: list[float] = []
         for record in summary.case_results:
             recall_hit = await _judge_recall_at_k(
@@ -866,7 +888,7 @@ class RagEvalRunner:
         return cases
 
     async def run(self) -> EvaluationReport:
-        """执行两组方法评测并生成报告对象。"""
+        """执行三组方法评测并生成报告对象。"""
         cases = self.load_cases()
         baseline = await _build_method_results(
             cases,
@@ -880,31 +902,38 @@ class RagEvalRunner:
         )
         current = await _build_method_results(
             cases,
-            method_name="current",
+            method_name="current_with_rerank",
             retrieval_mode="current",
             top_k=self.top_k,
             answer_model_name=self.answer_model_name,
             judge_model_name=self.judge_model_name,
             user_id=self.user_id,
             force_retrieval=self.force_retrieval,
+            use_rerank=True,
+        )
+        current_without_rerank = await _build_method_results(
+            cases,
+            method_name="current_without_rerank",
+            retrieval_mode="current",
+            top_k=self.top_k,
+            answer_model_name=self.answer_model_name,
+            judge_model_name=self.judge_model_name,
+            user_id=self.user_id,
+            force_retrieval=self.force_retrieval,
+            use_rerank=False,
         )
 
-        if not self.skip_ragas:
-            report = EvaluationReport(
-                case_count=len(cases),
-                generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-                baseline=baseline,
-                current=current,
-            )
-            await fill_ragas_metrics(report, self.judge_model_name, self.ragas_llm_only, self.ragas_batch_size)
-            return report
-
-        return EvaluationReport(
+        report = EvaluationReport(
             case_count=len(cases),
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
             baseline=baseline,
             current=current,
+            current_without_rerank=current_without_rerank,
+            top_k=self.top_k,
         )
+        if not self.skip_ragas:
+            await fill_ragas_metrics(report, self.judge_model_name, self.ragas_llm_only, self.ragas_batch_size)
+        return report
 
     def write_report(self, report: EvaluationReport, output_path: str | Path | None = None) -> Path:
         """写出 Markdown 报告。"""

@@ -14,7 +14,29 @@
 // 导入 highlight.js 的 CSS
 // 使用 github 主题（浅色）
 import 'highlight.js/styles/github.css'
+import { onBeforeUnmount, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import ToastContainer from './components/ToastContainer.vue'
+import { useKnowledgeUploadStore } from './stores/knowledgeUpload'
+
+const route = useRoute()
+const knowledgeUploadStore = useKnowledgeUploadStore()
+
+watch(
+  () => route.fullPath,
+  () => {
+    if (localStorage.getItem('token')) {
+      knowledgeUploadStore.startPolling(true)
+    } else {
+      knowledgeUploadStore.stopPolling()
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  knowledgeUploadStore.stopPolling()
+})
 </script>
 
 <style>

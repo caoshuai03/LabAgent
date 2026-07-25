@@ -163,8 +163,8 @@
 - 用 langchain 的 `ContextualCompressionRetriever` 包裹基础向量 retriever，配一个压缩器（compressor）做重排：
   - 首选 **`LLMListwiseRerank`**（用大模型对候选文档做列表式重排，复用现有 `ModelProvider` 的 chat 模型，无需额外部署 rerank 服务，最贴合"调用大模型进行 rerank"的诉求）。
   - 备选 `CrossEncoderReranker`（本地交叉编码器，若后续要省 LLM 调用成本可切换）。
-- rerank 后取前 `rag_rerank_top_n`（默认建议 5）条作为最终上下文。
-- **粗召回 topK（20）大、精排 top_n（5）小**：先多召回保证覆盖，再让大模型精排提升相关性、压掉噪声，降低幻觉。
+- rerank 后取前 `rag_rerank_top_n`（默认建议 20）条作为最终上下文。
+- **原问题 + 2 个 MultiQuery 改写 + 混合召回 + rerank top_n（20）**：先多召回保证覆盖，再让大模型精排提升相关性、压掉噪声，降低幻觉。
 - rerank 用的模型与是否启用均从 Settings 读取（`rag_rerank_enabled`、`rag_rerank_top_n`、`rag_rerank_model`）；关闭时退化为纯向量检索。
 
 ### 7.3 拼装上下文（改用框架能力，不手写拼接）
@@ -271,8 +271,9 @@ START → retrieve → rerank → generate → END
 | `rag_chunk_overlap` | `RAG_CHUNK_OVERLAP` | `100` | 切分重叠 token 数 |
 | `rag_top_k` | `RAG_TOP_K` | `20` | 向量粗召回条数（多召回，交给 rerank 精排） |
 | `rag_similarity_threshold` | `RAG_SIMILARITY_THRESHOLD` | `0.5` | 粗召回相似度阈值（放宽，精排把关） |
+| `rag_multi_query_count` | `RAG_MULTI_QUERY_COUNT` | `2` | MultiQuery 生成的改写数量，实际检索额外包含原问题 |
 | `rag_rerank_enabled` | `RAG_RERANK_ENABLED` | `true` | 大模型 rerank 精排开关，关闭时退化为纯向量检索 |
-| `rag_rerank_top_n` | `RAG_RERANK_TOP_N` | `5` | rerank 后保留的最终上下文条数 |
+| `rag_rerank_top_n` | `RAG_RERANK_TOP_N` | `20` | rerank 后保留的最终上下文条数 |
 | `rag_rerank_model` | `RAG_RERANK_MODEL` | （复用 chat 模型） | 用于 LLM rerank 的模型名 |
 
 > 沿用第二阶段：配置全部走 `Settings` / 环境变量（`@lru_cache` 单例），改 `.env` 后重启生效；禁止硬编码。

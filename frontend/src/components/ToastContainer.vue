@@ -10,9 +10,11 @@
         <div
           v-for="toast in toasts"
           :key="toast.id"
-          :class="['toast-item', `toast-${toast.type}`]"
+          :class="['toast-item', `toast-${toast.type}`, { actionable: toast.onClick }]"
           role="alert"
-          @click="removeToast(toast.id)"
+          @click="activateToast(toast.id)"
+          @mouseenter="pauseToast(toast.id)"
+          @mouseleave="resumeToast(toast.id)"
         >
           <span class="toast-icon" v-html="iconOf(toast.type)"></span>
           <span class="toast-message">{{ toast.message }}</span>
@@ -25,7 +27,7 @@
 <script setup>
 import { useToast } from '../composables/useToast'
 
-const { toasts, removeToast } = useToast()
+const { toasts, pauseToast, resumeToast, activateToast } = useToast()
 
 const iconOf = (type) => {
   const icons = {
@@ -72,6 +74,10 @@ const iconOf = (type) => {
   box-shadow:
     0 10px 30px rgba(0, 0, 0, 0.1),
     0 2px 8px rgba(0, 0, 0, 0.05);
+
+  &.actionable {
+    border-color: rgba(144, 19, 139, 0.24);
+  }
 }
 
 .toast-icon {

@@ -239,7 +239,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: 12px;
-  margin-bottom: 0;
+  margin-bottom: 4px;
   position: relative;
   transition: all 0.2s;
   height: 36px;
@@ -258,6 +258,9 @@ onBeforeUnmount(() => {
   }
 
   &.selection-mode {
+    user-select: none;
+    -webkit-user-select: none;
+
     .content {
       margin-right: 0;
     }

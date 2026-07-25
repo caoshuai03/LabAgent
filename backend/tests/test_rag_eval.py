@@ -27,15 +27,23 @@ def test_load_eval_cases_from_markdown_sample() -> None:
 
 @pytest.mark.asyncio
 async def test_runner_keeps_baseline_and_current_separate(monkeypatch) -> None:
-    """baseline 与 current 应走不同检索分支，但共用同一批问题。"""
-    calls: list[tuple[str, str, int, str, int]] = []
+    """baseline、current_with_rerank、current_without_rerank 应走不同检索配置。"""
+    calls: list[tuple[str, str, int, str, int, bool]] = []
 
     async def _fake_run_forced_retrieval_answer(
-        question: str, *, model_name: str, user_id: int, retrieval_mode: str, top_k: int
+        question: str,
+        *,
+        model_name: str,
+        user_id: int,
+        retrieval_mode: str,
+        top_k: int,
+        use_rerank: bool = True,
     ) -> tuple[str, list[str], str]:
-        calls.append((question, model_name, user_id, retrieval_mode, top_k))
+        calls.append((question, model_name, user_id, retrieval_mode, top_k, use_rerank))
         if retrieval_mode == "vector_only":
             return "baseline answer", ["来源: baseline.md\n黄金证据"], "baseline.md"
+        if use_rerank:
+            return "current answer", ["来源: current.md\n黄金证据"], "current.md"
         return "current answer", ["来源: current.md\n黄金证据"], "current.md"
 
     async def _fake_judge(*args, **kwargs) -> bool:
@@ -46,7 +54,7 @@ async def test_runner_keeps_baseline_and_current_separate(monkeypatch) -> None:
 
     runner = RagEvalRunner(
         case_path="../docs/rag_eval/RAG评测集样例.md",
-        top_k=5,
+        top_k=20,
         answer_model_name="gpt-5.5-2026-04-24",
         judge_model_name="gpt-5.5-2026-04-24",
         user_id=42,
@@ -55,8 +63,11 @@ async def test_runner_keeps_baseline_and_current_separate(monkeypatch) -> None:
     report = await runner.run()
 
     assert report.case_count == 10
+    assert report.top_k == 20
     assert report.baseline.recall_at_5 == 1.0
     assert report.current.recall_at_5 == 1.0
+    assert report.current_without_rerank is not None
+    assert report.current_without_rerank.recall_at_5 == 1.0
     assert report.baseline.case_results[0].first_source == "baseline.md"
     assert report.current.case_results[0].first_source == "current.md"
     assert (
@@ -64,14 +75,24 @@ async def test_runner_keeps_baseline_and_current_separate(monkeypatch) -> None:
         "gpt-5.5-2026-04-24",
         42,
         "vector_only",
-        5,
+        20,
+        True,
     ) in calls
     assert (
         "实验三什么时候提交？",
         "gpt-5.5-2026-04-24",
         42,
         "current",
-        5,
+        20,
+        True,
+    ) in calls
+    assert (
+        "实验三什么时候提交？",
+        "gpt-5.5-2026-04-24",
+        42,
+        "current",
+        20,
+        False,
     ) in calls
 
 
@@ -105,11 +126,18 @@ def test_build_markdown_report_contains_required_metrics() -> None:
         generated_at="2026-07-23 04:09",
         baseline=summary,
         current=summary,
+        current_without_rerank=rag_eval.MethodSummary(
+            method_name="current_without_rerank",
+            case_results=[case_result],
+            recall_at_5=1.0,
+        ),
+        top_k=20,
     )
 
     markdown = build_markdown_report(report)
 
-    assert "Recall@5" in markdown
+    assert "Recall@20" in markdown
+    assert "current_without_rerank" in markdown
     assert "ContextPrecision" in markdown
     assert "ContextRecall" in markdown
     assert "Faithfulness" in markdown
@@ -140,14 +168,18 @@ def test_evaluation_report_json_roundtrip(tmp_path) -> None:
         generated_at="2026-07-24 01:00",
         baseline=summary,
         current=summary,
+        current_without_rerank=summary,
+        top_k=20,
     )
 
     output_path = write_evaluation_report_json(report, tmp_path / "answers.json")
     loaded = load_evaluation_report(output_path)
 
     assert loaded.case_count == 1
+    assert loaded.top_k == 20
     assert loaded.baseline.case_results[0].response == "回答"
     assert loaded.current.case_results[0].retrieved_contexts == ["黄金证据"]
+    assert loaded.current_without_rerank is not None
 
 
 @pytest.mark.asyncio
@@ -174,6 +206,7 @@ async def test_recompute_recall_metrics_updates_saved_values(monkeypatch) -> Non
         generated_at="2026-07-24 01:00",
         baseline=summary,
         current=summary,
+        current_without_rerank=summary,
     )
 
     async def _fake_judge(*args, **kwargs) -> bool:

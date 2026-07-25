@@ -559,7 +559,7 @@ LLMListwiseRerank
 它会把用户问题和候选文档交给一个聊天大模型，让模型从整个候选列表的角度重新排序，再保留：
 
 ```text
-RAG_RERANK_TOP_N=5
+RAG_RERANK_TOP_N=20
 ```
 
 如果没有配置单独的 `RAG_RERANK_MODEL`，就复用默认聊天模型。
@@ -819,7 +819,8 @@ POST /api/v1/knowledge/file/update
 | `RAG_CHUNK_OVERLAP` | `100` | 边界信息更完整，但重复内容和向量更多 | 重复更少，但可能切断完整语义 |
 | `RAG_TOP_K` | `20` | 召回覆盖更广，rerank 成本更高 | 更快，但可能漏掉正确片段 |
 | `RAG_SIMILARITY_THRESHOLD` | `0.5` | 阈值越高越严格，误召回少但可能漏召回 | 阈值越低候选更多，但噪声增加 |
-| `RAG_RERANK_TOP_N` | `5` | 最终参考资料更多，Prompt 更长 | 上下文更精简，但可能信息不足 |
+| `RAG_MULTI_QUERY_COUNT` | `2` | 改写角度更多，候选更多但成本更高 | 更快，但问题表述覆盖更少 |
+| `RAG_RERANK_TOP_N` | `20` | 最终参考资料更多，Prompt 更长 | 上下文更精简，但可能信息不足 |
 | `RAG_RERANK_ENABLED` | `true` | 开启后准确性通常更好，但多一次 LLM 调用 | 关闭后更快、更省资源 |
 | `RAG_EMBEDDING_DIM` | `1024` | 不能独立随意调整 | 必须与 Embedding 模型和数据库一致 |
 | `MEMORY_MAX_MESSAGES` | `20` | 多轮上下文更多，模型输入更长 | 对话成本更低，但更容易忘记前文 |

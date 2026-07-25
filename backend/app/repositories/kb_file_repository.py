@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_file import KbFile
+from app.models.knowledge_status import KbFileStatus
 
 
 class KbFileRepository:
@@ -17,10 +18,24 @@ class KbFileRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def add(self, file_name: str, url: str) -> KbFile:
+    async def add(
+        self,
+        file_name: str,
+        url: str,
+        *,
+        status: str = KbFileStatus.READY.value,
+        upload_user_id: int | None = None,
+    ) -> KbFile:
         """新增文件记录。"""
         now = datetime.now()
-        kb_file = KbFile(file_name=file_name, url=url, create_time=now, update_time=now)
+        kb_file = KbFile(
+            file_name=file_name,
+            url=url,
+            status=status,
+            upload_user_id=upload_user_id,
+            create_time=now,
+            update_time=now,
+        )
         self.session.add(kb_file)
         await self.session.flush()
         return kb_file
@@ -46,3 +61,7 @@ class KbFileRepository:
         """按 ID 批量删除，返回影响行数。"""
         result = await self.session.execute(delete(KbFile).where(KbFile.id.in_(ids)))
         return result.rowcount or 0
+
+    async def delete_by_id(self, file_id: int) -> None:
+        """按 ID 删除单个文件。"""
+        await self.session.execute(delete(KbFile).where(KbFile.id == file_id))

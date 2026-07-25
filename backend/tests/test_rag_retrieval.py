@@ -47,6 +47,52 @@ class _FakeVectorRetriever:
         return [Document(page_content="黄金证据", metadata={"source": "baseline.md"})]
 
 
+class _FakeHybridRetriever:
+    """假混合检索器，用于验证 MultiQuery 构建参数。"""
+
+    pass
+
+
+class _FakeHybridInvoker:
+    """按查询返回固定排序结果的假混合检索器。"""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def invoke(self, query: str) -> list[Document]:
+        self.queries.append(query)
+        docs = {
+            "原问题": [
+                Document(page_content="A", metadata={"source": "origin-a.md"}),
+                Document(page_content="B", metadata={"source": "origin-b.md"}),
+            ],
+            "改写一": [
+                Document(page_content="B", metadata={"source": "rewrite-b.md"}),
+                Document(page_content="C", metadata={"source": "rewrite-c.md"}),
+            ],
+            "改写二": [
+                Document(page_content="B", metadata={"source": "rewrite-b.md"}),
+                Document(page_content="D", metadata={"source": "rewrite-d.md"}),
+            ],
+        }
+        return docs[query]
+
+
+class _FakeLlmChain:
+    """返回固定 MultiQuery 改写。"""
+
+    def invoke(self, payload: dict[str, str]) -> list[str]:
+        return ["改写一", "改写二"]
+
+
+class _FakeMultiQueryRetriever:
+    """只暴露 RRF 融合测试需要的属性。"""
+
+    def __init__(self) -> None:
+        self.retriever = _FakeHybridInvoker()
+        self.llm_chain = _FakeLlmChain()
+
+
 @pytest.mark.asyncio
 async def test_retrieve_uses_sync_retriever_in_thread(monkeypatch) -> None:
     """同步 PGVector 组合检索器必须通过 invoke 在线程中执行。"""
@@ -100,6 +146,38 @@ def test_local_query_rewrite_model_is_independent_from_rerank(monkeypatch) -> No
     assert model.model == "qwen3:4b"
     assert model.reasoning is False
     assert model.temperature == 0
+
+
+def test_multi_query_retriever_includes_original_and_two_rewrites(monkeypatch) -> None:
+    """当前检索链路应使用原问题 + 2 个改写进入混合召回。"""
+    captured: dict[str, object] = {}
+
+    def _fake_from_llm(**kwargs):
+        captured.update(kwargs)
+        return _SyncRetriever()
+
+    monkeypatch.setattr(rag_retrieval.settings, "rag_multi_query_count", 2)
+    monkeypatch.setattr(rag_retrieval.rag_store, "build_hybrid_retriever", lambda **kwargs: _FakeHybridRetriever())
+    monkeypatch.setattr(rag_retrieval.MultiQueryRetriever, "from_llm", _fake_from_llm)
+    monkeypatch.setattr(rag_retrieval.model_provider, "get_query_rewrite_model", lambda: object())
+
+    retriever = rag_retrieval._build_retriever()
+
+    prompt = captured["prompt"]
+    assert isinstance(retriever, _SyncRetriever)
+    assert captured["include_original"] is True
+    assert "生成 2 个检索问题" in prompt.format(question="实验三什么时候提交？")
+
+
+def test_retrieve_with_query_rrf_fuses_original_and_rewrites(monkeypatch) -> None:
+    """关闭 rerank 的评测召回应按原问题和改写结果做全局 RRF。"""
+    fake_retriever = _FakeMultiQueryRetriever()
+    monkeypatch.setattr(rag_retrieval, "_build_retriever", lambda: fake_retriever)
+
+    documents = rag_retrieval._retrieve_with_query_rrf_sync("原问题")
+
+    assert fake_retriever.retriever.queries == ["原问题", "改写一", "改写二"]
+    assert [document.page_content for document in documents[:4]] == ["B", "A", "C", "D"]
 
 
 @pytest.mark.asyncio

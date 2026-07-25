@@ -2,15 +2,37 @@
   <div class="knowledge-container">
     <Sidebar />
     <div class="knowledge-main">
-      <div class="knowledge-content">
+      <div
+        :class="['knowledge-content', { 'dragging-upload': isDraggingUpload }]"
+        @dragenter.prevent="handleUploadDragEnter"
+        @dragover.prevent
+        @dragleave.prevent="handleUploadDragLeave"
+        @drop.prevent="handleUploadDrop"
+      >
+        <div v-if="isDraggingUpload" class="upload-drop-hint" aria-hidden="true">
+          <UploadIcon :size="22" />
+          <span>松开以上传知识库文件</span>
+        </div>
         <div v-if="uploading" class="uploading-overlay" role="status" aria-live="polite">
           <div class="uploading-modal">
-            <div class="uploading-spinner" />
-            <div class="uploading-text">文件上传中，请稍候...</div>
+            <div class="uploading-content">
+              <div class="uploading-text">
+                {{ uploadProgress === null ? '文件上传中...' : `文件上传中 ${uploadProgress}%` }}
+              </div>
+              <div class="upload-progress-track">
+                <div
+                  :class="['upload-progress-bar', { indeterminate: uploadProgress === null }]"
+                  :style="uploadProgress === null ? undefined : { width: `${uploadProgress}%` }"
+                />
+              </div>
+            </div>
           </div>
         </div>
         <!-- 顶部操作栏 -->
-        <div class="toolbar" v-if="!loading">
+        <div
+          v-if="!loading"
+          :class="['toolbar', { 'sidebar-collapsed': chatStore.sidebarCollapsed }]"
+        >
           <div class="toolbar-left">
             <!-- 上传按钮：管理员可直接上传，普通用户点击显示气泡提示 -->
             <div class="header-actions">
@@ -78,12 +100,12 @@
         </div>
 
         <!-- 空状态 -->
-        <div v-else-if="fileList.length === 0 && !searchKeyword" class="empty-state">
+        <div v-else-if="displayFileList.length === 0 && !searchKeyword" class="empty-state">
           <h3>暂无记录</h3>
         </div>
 
         <!-- 搜索无结果状态 -->
-        <div v-else-if="fileList.length === 0 && searchKeyword" class="empty-state">
+        <div v-else-if="displayFileList.length === 0 && searchKeyword" class="empty-state">
           <div class="empty-icon">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -105,23 +127,50 @@
         </div>
 
         <!-- 文件列表 -->
-        <div v-else-if="fileList.length > 0" class="file-list">
+        <div v-else-if="displayFileList.length > 0" class="file-list">
           <div
-            v-for="file in fileList"
-            :key="file.id"
-            :class="['file-card', { selected: selectedIds.includes(file.id) }]"
-            @click="handleRowClick(file.id)"
+            v-for="file in displayFileList"
+            :key="file.task_id || file.id"
+            :ref="(element) => setFileCardRef(element, file)"
+            :class="[
+              'file-card',
+              {
+                selected: selectedIds.includes(file.id),
+                highlighted: String(file.task_id) === highlightedTaskId,
+                'has-task': file.task_id,
+              },
+            ]"
+            @click="file.id != null && !isFileProcessing(file) && handleRowClick(file.id)"
           >
             <div class="file-header">
               <div class="file-info">
                 <h3 class="file-name" v-tooltip="file.file_name">{{ file.file_name }}</h3>
                 <p class="file-time">{{ formatDate(file.create_time) }}</p>
+                <div v-if="file.task_id" class="task-state">
+                  <span :class="['task-badge', taskStatusClass(file)]">
+                    <span v-if="!knowledgeUploadStore.isTerminal(file.status)" class="task-spinner" />
+                    {{ taskStatusText(file) }}
+                  </span>
+                  <span v-if="shouldShowTaskStage(file)" class="task-stage">
+                    {{ taskStageText(file.stage) }}
+                  </span>
+                  <span v-if="file.error_message" class="task-error">{{ file.error_message }}</span>
+                </div>
               </div>
               <div v-if="isAdmin" class="file-actions" @click.stop>
                 <button
+                  v-if="file.task_id && knowledgeUploadStore.isFailed(file.status)"
+                  @click="handleRetryTask(file.task_id)"
+                  class="retry-btn"
+                  :disabled="retryingTaskId === String(file.task_id)"
+                >
+                  {{ retryingTaskId === String(file.task_id) ? '重试中...' : '重试' }}
+                </button>
+                <button
+                  v-if="file.id != null"
                   @click="handleUpdateClick(file.id)"
                   class="icon-btn"
-                  :disabled="uploading"
+                  :disabled="uploading || isFileProcessing(file)"
                   v-tooltip="'更新文件'"
                 >
                   <UploadIcon :size="16" />
@@ -248,9 +297,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { knowledgeApi } from '../api/knowledge'
 import { useChatStore } from '../stores/chat'
+import { useKnowledgeUploadStore } from '../stores/knowledgeUpload'
 import { useUserStore } from '../stores/user'
 import Sidebar from '../components/Sidebar.vue'
 import { sleep } from '../utils/async'
@@ -263,6 +314,8 @@ import { useToast } from '../composables/useToast'
 // 初始化 chatStore 和 userStore
 const chatStore = useChatStore()
 const userStore = useUserStore()
+const knowledgeUploadStore = useKnowledgeUploadStore()
+const route = useRoute()
 
 // 全局 toast：统一成功/失败反馈
 const toast = useToast()
@@ -283,15 +336,46 @@ const searchKeyword = ref('')
 const selectedIds = ref([])
 const loading = ref(false)
 const uploading = ref(false)
+const isDraggingUpload = ref(false)
 const deleting = ref(false)
 const downloading = ref(false)
+const uploadProgress = ref(null)
+const retryingTaskId = ref(null)
+const highlightedTaskId = ref('')
 const fileInput = ref(null)
 const updateFileInput = ref(null)
+const fileCardRefs = new Map()
 // 当前待更新的记录 id，供 handleUpdateFileSelect 使用
 const updatingId = ref(null)
+let highlightTimer = null
+let dragDepth = 0
+
+const displayFileList = computed(() => {
+  const records = fileList.value.map((file) => ({ ...file }))
+  knowledgeUploadStore.tasks.forEach((task) => {
+    const index = records.findIndex(
+      (file) =>
+        (file.task_id && String(file.task_id) === String(task.task_id)) ||
+        (task.kb_file_id != null && String(file.id) === String(task.kb_file_id)),
+    )
+    if (index >= 0) {
+      records.splice(index, 1, { ...records[index], ...task })
+    } else if (!searchKeyword.value) {
+      records.unshift({
+        ...task,
+        id: task.kb_file_id ?? task.id,
+        file_name: task.file_name || task.name || '待处理文件',
+      })
+    }
+  })
+  return records
+})
 
 const isAllSelected = computed(() => {
-  return fileList.value.length > 0 && selectedIds.value.length === fileList.value.length
+  const selectableFiles = displayFileList.value.filter(
+    (file) => file.id != null && !isFileProcessing(file),
+  )
+  return selectableFiles.length > 0 && selectedIds.value.length === selectableFiles.length
 })
 
 // 防抖搜索
@@ -346,6 +430,72 @@ const formatDate = (dateString) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
+const taskStatusText = (file) => {
+  if (knowledgeUploadStore.isSuccess(file.status)) return '处理完成'
+  if (knowledgeUploadStore.isFailed(file.status)) return '处理失败'
+  const statusLabels = {
+    pending: '等待处理',
+    queued: '排队中',
+    processing: '处理中',
+    running: '处理中',
+  }
+  return statusLabels[String(file.status || '').toLowerCase()] || '处理中'
+}
+
+const taskStageText = (stage) => {
+  const stageLabels = {
+    queued: '等待后台处理',
+    parsing: '正在解析文档',
+    splitting: '正在切分文档',
+    indexing: '正在向量化',
+    finalizing: '正在完成入库',
+    completed: '已可以使用',
+    failed: '处理未完成',
+  }
+  return stageLabels[String(stage || '').toLowerCase()] || ''
+}
+
+const shouldShowTaskStage = (file) =>
+  ['parsing', 'splitting', 'indexing', 'finalizing'].includes(
+    String(file.stage || '').toLowerCase(),
+  )
+
+const isFileProcessing = (file) =>
+  ['pending', 'queued', 'processing', 'running'].includes(
+    String(file.file_status || file.status || '').toLowerCase(),
+  )
+
+const taskStatusClass = (file) => {
+  if (knowledgeUploadStore.isSuccess(file.status)) return 'success'
+  if (knowledgeUploadStore.isFailed(file.status)) return 'failed'
+  return 'processing'
+}
+
+const setFileCardRef = (element, file) => {
+  if (!file.task_id) return
+  const key = String(file.task_id)
+  if (element) {
+    fileCardRefs.set(key, element)
+  } else {
+    fileCardRefs.delete(key)
+  }
+}
+
+const locateUploadTask = async () => {
+  const taskId = route.query.upload_task_id
+  if (!taskId) return
+  await nextTick()
+  const key = String(taskId)
+  const element = fileCardRefs.get(key)
+  if (!element) return
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  highlightedTaskId.value = key
+  clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    highlightedTaskId.value = ''
+  }, 3000)
+}
+
 // 上传按钮点击处理：管理员直接上传，普通用户显示气泡提示
 const handleUploadClick = () => {
   if (isAdmin.value) {
@@ -362,23 +512,54 @@ const handleUploadClick = () => {
   }
 }
 
-const handleFileSelect = async (event) => {
-  const files = Array.from(event.target.files)
+const uploadFiles = async (files) => {
   if (files.length === 0) return
 
   uploading.value = true
+  uploadProgress.value = 0
   try {
-    const formData = new FormData()
-    files.forEach((file) => {
+    const totalBytes = Math.max(
+      files.reduce((sum, file) => sum + file.size, 0),
+      1,
+    )
+    let uploadedBytes = 0
+    const failedFiles = []
+    for (const file of files) {
+      const formData = new FormData()
       formData.append('file', file)
-    })
-
-    const response = await knowledgeApi.uploadFiles(formData)
-    if (response.data.code === 0) {
-      showMessage(response.data.message || '文件上传成功')
-      await fetchFileList()
-    } else {
-      showMessage('文件上传失败: ' + (response.data.message || '未知错误'), 'error')
+      try {
+        const response = await knowledgeApi.uploadFiles(formData, (progressEvent) => {
+          const currentLoaded = Math.min(progressEvent.loaded, file.size)
+          uploadProgress.value = Math.min(
+            100,
+            Math.round(((uploadedBytes + currentLoaded) * 100) / totalBytes),
+          )
+        })
+        if (response.data.code === 0) {
+          knowledgeUploadStore.registerUploadResult(response.data.data)
+        } else {
+          failedFiles.push({
+            file_name: file.name,
+            message: response.data.message || '未知错误',
+          })
+        }
+      } catch (error) {
+        const message =
+          error?.response?.status === 413
+            ? '文件超过上传大小限制'
+            : error?.response?.data?.message || error.message || '网络错误'
+        failedFiles.push({ file_name: file.name, message })
+        console.error(`上传文件 ${file.name} 错误:`, error)
+      } finally {
+        uploadedBytes += file.size
+        uploadProgress.value = Math.min(100, Math.round((uploadedBytes * 100) / totalBytes))
+      }
+    }
+    await fetchFileList()
+    if (failedFiles.length > 0) {
+      const firstFailure = failedFiles[0]
+      const suffix = failedFiles.length > 1 ? `，另有 ${failedFiles.length - 1} 个文件失败` : ''
+      showMessage(`${firstFailure.file_name} 上传失败：${firstFailure.message}${suffix}`, 'error')
     }
   } catch (error) {
     console.error('上传文件错误:', error)
@@ -398,11 +579,45 @@ const handleFileSelect = async (event) => {
     }
   } finally {
     uploading.value = false
+    uploadProgress.value = null
+  }
+}
+
+const handleFileSelect = async (event) => {
+  const files = Array.from(event.target.files || [])
+  try {
+    await uploadFiles(files)
+  } finally {
     // 上传结束后统一清空选择，避免重复选择同一文件时 change 不触发。
     if (fileInput.value) {
       fileInput.value.value = ''
     }
   }
+}
+
+const handleUploadDragEnter = () => {
+  dragDepth += 1
+  if (isAdmin.value && !uploading.value) {
+    isDraggingUpload.value = true
+  }
+}
+
+const handleUploadDragLeave = () => {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) {
+    isDraggingUpload.value = false
+  }
+}
+
+const handleUploadDrop = async (event) => {
+  dragDepth = 0
+  isDraggingUpload.value = false
+  if (!isAdmin.value) {
+    showMessage('仅管理员可上传，请联系管理员', 'warning')
+    return
+  }
+  if (uploading.value) return
+  await uploadFiles(Array.from(event.dataTransfer?.files || []))
 }
 
 // 更新文件按钮点击：记录待更新 id 并打开文件选择
@@ -453,7 +668,9 @@ const handleSelectFile = (id, checked) => {
 
 const handleSelectAll = (event) => {
   if (event.target.checked) {
-    selectedIds.value = fileList.value.map((file) => file.id)
+    selectedIds.value = displayFileList.value
+      .filter((file) => file.id != null && !isFileProcessing(file))
+      .map((file) => file.id)
   } else {
     selectedIds.value = []
   }
@@ -465,6 +682,22 @@ const handleRowClick = (id) => {
     selectedIds.value.splice(index, 1)
   } else {
     selectedIds.value.push(id)
+  }
+}
+
+const handleRetryTask = async (taskId) => {
+  retryingTaskId.value = String(taskId)
+  try {
+    await knowledgeUploadStore.retryTask(taskId)
+    showMessage('已重新提交处理任务', 'info')
+  } catch (error) {
+    console.error('重试知识库上传任务失败:', error)
+    showMessage(
+      '重试失败: ' + (error?.response?.data?.message || error.message || '网络错误'),
+      'error',
+    )
+  } finally {
+    retryingTaskId.value = null
   }
 }
 
@@ -581,6 +814,21 @@ onMounted(() => {
   chatStore.initialize()
   fetchFileList()
 })
+
+watch(
+  () => [
+    route.query.upload_task_id,
+    displayFileList.value.map((file) => file.task_id || '').join(','),
+  ],
+  locateUploadTask,
+  { immediate: true, flush: 'post' },
+)
+
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer)
+  clearTimeout(tipTimer)
+  clearTimeout(highlightTimer)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -603,11 +851,33 @@ onMounted(() => {
 }
 
 .knowledge-content {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
   padding: 24px;
   overflow: hidden;
+
+  &.dragging-upload {
+    box-shadow: inset 0 0 0 2px rgba(144, 19, 139, 0.24);
+  }
+}
+
+.upload-drop-hint {
+  position: absolute;
+  inset: 24px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed rgba(144, 19, 139, 0.4);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--accent-color);
+  font-size: 14px;
+  font-weight: 500;
+  pointer-events: none;
 }
 
 // 上传遮罩层：上传期间阻止用户重复操作，并提供明确的等待反馈
@@ -630,30 +900,45 @@ onMounted(() => {
     gap: 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
     max-width: 80vw;
+    min-width: min(360px, calc(100vw - 48px));
   }
 
-  .uploading-spinner {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 2px solid var(--border-color);
-    border-top-color: var(--accent-color);
-    animation: uploadingSpin 0.9s linear infinite;
-    flex-shrink: 0;
+  .uploading-content {
+    width: 100%;
   }
 
   .uploading-text {
     color: var(--text-primary);
     font-size: 14px;
+    margin-bottom: 10px;
+  }
+
+  .upload-progress-track {
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(144, 19, 139, 0.12);
+  }
+
+  .upload-progress-bar {
+    height: 100%;
+    border-radius: inherit;
+    background: #90138b;
+    transition: width 0.2s ease;
+
+    &.indeterminate {
+      width: 45%;
+      animation: uploadProgressIndeterminate 1.2s ease-in-out infinite;
+    }
   }
 }
 
-@keyframes uploadingSpin {
-  from {
-    transform: rotate(0deg);
+@keyframes uploadProgressIndeterminate {
+  0% {
+    transform: translateX(-110%);
   }
-  to {
-    transform: rotate(360deg);
+  100% {
+    transform: translateX(240%);
   }
 }
 
@@ -704,6 +989,11 @@ onMounted(() => {
     align-items: center;
     gap: 12px;
     flex: 1;
+    transition: padding-left 0.2s ease;
+  }
+
+  &.sidebar-collapsed .toolbar-left {
+    padding-left: 36px;
   }
 
   // 上传按钮包装器（用于定位气泡提示）
@@ -887,7 +1177,8 @@ onMounted(() => {
     background-color: rgba(144, 19, 139, 0.03);
   }
 
-  &.selected {
+  &.selected,
+  &.highlighted {
     background-color: rgba(144, 19, 139, 0.08);
     border-color: rgba(144, 19, 139, 0.2);
   }
@@ -926,11 +1217,82 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
+.task-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+  font-size: 12px;
+}
+
+.task-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+
+  &.processing {
+    color: #90138b;
+    background: rgba(144, 19, 139, 0.1);
+  }
+
+  &.success {
+    color: #047857;
+    background: rgba(16, 185, 129, 0.11);
+  }
+
+  &.failed {
+    color: #dc3545;
+    background: rgba(220, 53, 69, 0.1);
+  }
+}
+
+.task-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(144, 19, 139, 0.25);
+  border-top-color: #90138b;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.task-stage {
+  color: var(--text-secondary);
+}
+
+.task-error {
+  flex-basis: 100%;
+  color: #dc3545;
+  word-break: break-word;
+}
+
 .file-actions {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.retry-btn {
+  padding: 5px 10px;
+  border: 1px solid rgba(220, 53, 69, 0.2);
+  border-radius: 6px;
+  background: rgba(220, 53, 69, 0.08);
+  color: #dc3545;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: rgba(220, 53, 69, 0.14);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 .icon-btn {
@@ -1102,6 +1464,10 @@ onMounted(() => {
     .toolbar-center,
     .toolbar-right {
       width: 100%;
+    }
+
+    &.sidebar-collapsed .toolbar-left {
+      padding-left: 0;
     }
 
     .toolbar-right {

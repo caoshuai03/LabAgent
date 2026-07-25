@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     postgres_password: str = "admin"
     postgres_db: str = "postgres"
 
+    # Redis + ARQ 异步任务
+    redis_url: str = "redis://localhost:6379/0"
+    arq_queue_name: str = "kb_upload"
+    arq_job_timeout_seconds: int = 1800
+    arq_max_jobs: int = 2
+
     # JWT
     jwt_secret_key: str = "change-me-in-env"
     jwt_ttl_seconds: int = 86400
@@ -78,8 +84,10 @@ class Settings(BaseSettings):
     rag_top_k: int = 20
     rag_similarity_threshold: float = 0.5
     rag_query_rewrite_model: str = ""
+    # MultiQuery 生成的改写数量；实际检索会额外包含原始问题
+    rag_multi_query_count: int = 2
     rag_rerank_enabled: bool = True
-    rag_rerank_top_n: int = 5
+    rag_rerank_top_n: int = 20
     rag_rerank_model: str = ""
     # rerank 只需输出文档 ID 排序，限制本地模型输出长度以避免无意义长思考
     rag_rerank_num_predict: int = 64
