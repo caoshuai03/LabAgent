@@ -3,7 +3,13 @@
     <Sidebar />
     <div class="knowledge-main">
       <div
-        :class="['knowledge-content', { 'dragging-upload': isDraggingUpload }]"
+        :class="[
+          'knowledge-content',
+          {
+            'dragging-upload': isDraggingUpload,
+            'sidebar-collapsed': chatStore.sidebarCollapsed,
+          },
+        ]"
         @dragenter.prevent="handleUploadDragEnter"
         @dragover.prevent
         @dragleave.prevent="handleUploadDragLeave"
@@ -29,10 +35,7 @@
           </div>
         </div>
         <!-- 顶部操作栏 -->
-        <div
-          v-if="!loading"
-          :class="['toolbar', { 'sidebar-collapsed': chatStore.sidebarCollapsed }]"
-        >
+        <div v-if="!loading" class="toolbar">
           <div class="toolbar-left">
             <!-- 上传按钮：管理员可直接上传，普通用户点击显示气泡提示 -->
             <div class="header-actions">
@@ -857,9 +860,14 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding: 24px;
   overflow: hidden;
+  transition: padding-left 0.2s ease;
 
   &.dragging-upload {
     box-shadow: inset 0 0 0 2px rgba(144, 19, 139, 0.24);
+  }
+
+  &.sidebar-collapsed {
+    padding-left: 60px;
   }
 }
 
@@ -990,10 +998,6 @@ onBeforeUnmount(() => {
     gap: 12px;
     flex: 1;
     transition: padding-left 0.2s ease;
-  }
-
-  &.sidebar-collapsed .toolbar-left {
-    padding-left: 36px;
   }
 
   // 上传按钮包装器（用于定位气泡提示）
@@ -1453,6 +1457,10 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .knowledge-content {
     padding: 12px;
+
+    &.sidebar-collapsed {
+      padding-left: 12px;
+    }
   }
 
   .toolbar {
@@ -1464,10 +1472,6 @@ onBeforeUnmount(() => {
     .toolbar-center,
     .toolbar-right {
       width: 100%;
-    }
-
-    &.sidebar-collapsed .toolbar-left {
-      padding-left: 0;
     }
 
     .toolbar-right {

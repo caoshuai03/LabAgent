@@ -32,6 +32,15 @@ class DeleteSessionRequest(BaseModel):
     session_ids: list[str] | None = None
 
 
+class ChatReasoningVO(BaseModel):
+    """主 Agent 单轮思考过程。"""
+
+    reasoning_id: str
+    phase: str
+    round_number: int
+    content: str
+
+
 class ChatMessageVO(BaseModel):
     """消息返回体。"""
 
@@ -40,6 +49,7 @@ class ChatMessageVO(BaseModel):
     role: str
     content: str | None
     sources: list[KbSourceVO] = Field(default_factory=list)
+    reasoning: list[ChatReasoningVO] = Field(default_factory=list)
     tool_calls: list[ChatToolCallVO] = Field(default_factory=list)
     created_at: datetime
 

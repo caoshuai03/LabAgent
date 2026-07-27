@@ -205,7 +205,7 @@ Tool Runner 只接受内部 Token 鉴权，请求工作区必须位于共享工�
 | `updates` | 识别 `AIMessage.tool_calls`、`ToolMessage` 和 `interrupt` |
 | `custom` | 输出 RAG 来源和工具内部 running/done/failed 状态 |
 
-主要 SSE 事件为：`token`、`sources`、`tool_call`、`status`、`tool_result`、`tool_approval_required`、`paused`、`final`、`error`。
+主要 SSE 事件为：`token`、`reasoning_token`、`reasoning_done`、`sources`、`tool_call`、`status`、`tool_result`、`tool_approval_required`、`paused`、`final`、`error`。其中 reasoning 事件只由主 `agent` 节点下发，`rerank`、查询改写和标题生成等内部模型调用不会展示给前端。
 
 工具记录以 `(session_id, tool_call_id)` 幂等保存，状态大致为：
 

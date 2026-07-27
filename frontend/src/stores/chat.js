@@ -18,6 +18,9 @@ export const useChatStore = defineStore('chat', () => {
 
   // 侧边栏折叠状态
   const sidebarCollapsed = ref(false)
+  const SIDEBAR_MIN_WIDTH = 240
+  const SIDEBAR_MAX_WIDTH = 360
+  const sidebarWidth = ref(280)
 
   // 切换用户后需要重新加载会话列表：logout 时置 true，Chat 视图 onActivated 时据此重载，
   // 避免 keep-alive 缓存导致上一个用户的会话残留
@@ -27,9 +30,11 @@ export const useChatStore = defineStore('chat', () => {
   const shouldFocusInput = ref(false)
 
   // 侧栏宽度（像素），由正文/侧栏之间的分隔条拖拽调节
-  const PREVIEW_PANEL_MIN_WIDTH = 320
+  const PREVIEW_PANEL_MIN_WIDTH = 260
   const PREVIEW_PANEL_MAX_WIDTH = 900
   const previewPanelWidth = ref(460)
+  const previewPanelSwitchingCollapse = ref(false)
+  let previewPanelSwitchingCollapseTimer = null
 
   const setPreviewPanelWidth = (width) => {
     const clamped = Math.min(PREVIEW_PANEL_MAX_WIDTH, Math.max(PREVIEW_PANEL_MIN_WIDTH, width))
@@ -104,6 +109,17 @@ export const useChatStore = defineStore('chat', () => {
     return conversationStates.value[conversationKey] || null
   }
 
+  const markPreviewPanelSwitchingCollapse = () => {
+    previewPanelSwitchingCollapse.value = true
+    if (previewPanelSwitchingCollapseTimer) {
+      globalThis.clearTimeout(previewPanelSwitchingCollapseTimer)
+    }
+    previewPanelSwitchingCollapseTimer = globalThis.setTimeout(() => {
+      previewPanelSwitchingCollapse.value = false
+      previewPanelSwitchingCollapseTimer = null
+    }, 180)
+  }
+
   const selectConversationKey = (conversationKey) => {
     activeConversationKey.value = conversationKey
 
@@ -116,6 +132,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const createDraftConversation = ({ focus = true } = {}) => {
+    const currentState = getConversationState(activeConversationKey.value, false)
+    if (currentState?.previewPanelOpen) {
+      markPreviewPanelSwitchingCollapse()
+    }
+
     const draftConversationKey = generateDraftConversationKey()
     const state = ensureConversationState(draftConversationKey)
 
@@ -337,6 +358,12 @@ export const useChatStore = defineStore('chat', () => {
    * @param {string} conversationId - 会话ID
    */
   const switchConversation = async (conversationId) => {
+    const currentState = getConversationState(activeConversationKey.value, false)
+    const targetState = getConversationState(conversationId, false)
+    if (currentState?.previewPanelOpen && !targetState?.previewPanelOpen) {
+      markPreviewPanelSwitchingCollapse()
+    }
+
     selectConversationKey(conversationId)
 
     const conversation = conversations.value.find((conv) => conv.id === conversationId)
@@ -486,6 +513,7 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
       toolEvents: [],
       sources: [],
+      reasoning: [],
       isComplete: sender !== 'assistant',
       feedbackState: null,
     }
@@ -537,6 +565,62 @@ export const useChatStore = defineStore('chat', () => {
     if (lastMessage && lastMessage.sender === 'assistant') {
       lastMessage.isComplete = true
     }
+  }
+
+  const appendReasoningToLastMessage = (payload, conversationKey = activeConversationKey.value) => {
+    const lastMessage = getLastMessage(conversationKey)
+    const content = typeof payload?.content === 'string' ? payload.content : ''
+    if (!lastMessage || lastMessage.sender !== 'assistant' || !content) return
+
+    if (!Array.isArray(lastMessage.reasoning)) {
+      lastMessage.reasoning = []
+    }
+    const reasoningId = payload.reasoning_id || `agent-${payload.round_number || lastMessage.reasoning.length + 1}`
+    let segment = lastMessage.reasoning.find((item) => item.reasoning_id === reasoningId)
+    if (!segment) {
+      lastMessage.reasoning.forEach((item) => {
+        if (!item.is_complete && !item.user_toggled) item.collapsed = true
+      })
+      segment = {
+        reasoning_id: reasoningId,
+        phase: payload.phase || 'agent',
+        round_number: payload.round_number || lastMessage.reasoning.length + 1,
+        content: '',
+        is_complete: false,
+        collapsed: false,
+        user_toggled: false,
+      }
+      lastMessage.reasoning.push(segment)
+    }
+    segment.content += content
+  }
+
+  const completeLastMessageReasoning = (
+    reasoningId = null,
+    conversationKey = activeConversationKey.value,
+  ) => {
+    const lastMessage = getLastMessage(conversationKey)
+    if (!lastMessage || lastMessage.sender !== 'assistant' || !Array.isArray(lastMessage.reasoning)) return
+
+    lastMessage.reasoning.forEach((segment) => {
+      if (reasoningId && segment.reasoning_id !== reasoningId) return
+      segment.is_complete = true
+      if (!segment.user_toggled) segment.collapsed = true
+    })
+  }
+
+  const toggleMessageReasoning = (
+    messageId,
+    reasoningId,
+    conversationKey = activeConversationKey.value,
+  ) => {
+    const state = getConversationState(conversationKey)
+    const message = state?.messages.find((item) => item.id === messageId)
+    const segment = message?.reasoning?.find((item) => item.reasoning_id === reasoningId)
+    if (!segment) return
+
+    segment.collapsed = !segment.collapsed
+    segment.user_toggled = true
   }
 
   const setMessageFeedbackState = (
@@ -661,6 +745,14 @@ export const useChatStore = defineStore('chat', () => {
           timestamp: msg.created_at || new Date().toISOString(),
           toolEvents,
           sources: Array.isArray(msg.sources) ? msg.sources : [],
+          reasoning: Array.isArray(msg.reasoning)
+            ? msg.reasoning.map((segment) => ({
+                ...segment,
+                is_complete: true,
+                collapsed: true,
+                user_toggled: false,
+              }))
+            : [],
           isComplete: true,
           feedbackState: null,
         }
@@ -716,6 +808,10 @@ export const useChatStore = defineStore('chat', () => {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
 
+  const setSidebarWidth = (width) => {
+    sidebarWidth.value = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width))
+  }
+
   const focusInput = () => {
     shouldFocusInput.value = true
   }
@@ -750,6 +846,11 @@ export const useChatStore = defineStore('chat', () => {
    * 并标记 needsReload，让 Chat 视图重新激活时按新用户重新加载
    */
   const reset = () => {
+    if (previewPanelSwitchingCollapseTimer) {
+      globalThis.clearTimeout(previewPanelSwitchingCollapseTimer)
+      previewPanelSwitchingCollapseTimer = null
+    }
+    previewPanelSwitchingCollapse.value = false
     conversations.value = []
     conversationStates.value = {}
     activeConversationKey.value = null
@@ -768,6 +869,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingApproval,
     historyLoadError,
     sidebarCollapsed,
+    sidebarWidth,
     needsReload,
     shouldFocusInput,
     isNewConversation,
@@ -778,12 +880,14 @@ export const useChatStore = defineStore('chat', () => {
     previewTabs,
     previewActivePath,
     previewPanelWidth,
+    previewPanelSwitchingCollapse,
     artifactPaths,
     openPreview,
     setPreviewActive,
     closePreviewTab,
     openPreviewPanel,
     closePreviewPanel,
+    setSidebarWidth,
     setPreviewPanelWidth,
     createConversation,
     setCurrentSessionId,
@@ -800,6 +904,9 @@ export const useChatStore = defineStore('chat', () => {
     addMessage,
     updateLastMessage,
     markLastAssistantMessageComplete,
+    appendReasoningToLastMessage,
+    completeLastMessageReasoning,
+    toggleMessageReasoning,
     setMessageFeedbackState,
     addToolEventToLastMessage,
     setPendingApproval,

@@ -26,6 +26,108 @@ from app.tools.result import parse_result_envelope, redact_value, truncate_text
 
 logger = logging.getLogger("labagent")
 
+_MAX_REASONING_SEGMENT_LENGTH = 4_000
+_MAX_REASONING_TOTAL_LENGTH = 12_000
+
+
+class _ThinkTagStreamParser:
+    """按流式分片拆分 <think> 标签内的思考内容与最终回答。"""
+
+    _open_tag = "<think>"
+    _close_tag = "</think>"
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._in_reasoning = False
+
+    def feed(self, content: str) -> tuple[list[str], list[str], bool]:
+        """解析一个文本分片，保留可能被切开的标签尾部。"""
+        reasoning_parts: list[str] = []
+        answer_parts: list[str] = []
+        reasoning_finished = False
+        pending = self._buffer + content
+        self._buffer = ""
+
+        while pending:
+            tag = self._close_tag if self._in_reasoning else self._open_tag
+            tag_index = pending.lower().find(tag)
+            if tag_index >= 0:
+                before_tag = pending[:tag_index]
+                if before_tag:
+                    (reasoning_parts if self._in_reasoning else answer_parts).append(before_tag)
+                pending = pending[tag_index + len(tag) :]
+                if self._in_reasoning:
+                    reasoning_finished = True
+                self._in_reasoning = not self._in_reasoning
+                continue
+
+            tail_length = len(tag) - 1
+            if len(pending) <= tail_length:
+                self._buffer = pending
+                break
+            visible, self._buffer = pending[:-tail_length], pending[-tail_length:]
+            (reasoning_parts if self._in_reasoning else answer_parts).append(visible)
+            break
+
+        return reasoning_parts, answer_parts, reasoning_finished
+
+    def finish(self) -> tuple[list[str], list[str], bool]:
+        """结束当前模型分片，输出延迟缓冲的内容。"""
+        reasoning_parts: list[str] = []
+        answer_parts: list[str] = []
+        if self._buffer:
+            (reasoning_parts if self._in_reasoning else answer_parts).append(self._buffer)
+        reasoning_finished = self._in_reasoning
+        self._buffer = ""
+        self._in_reasoning = False
+        return reasoning_parts, answer_parts, reasoning_finished
+
+
+class _ReasoningCollector:
+    """限制并汇集可向用户展示、可持久化的主 Agent 思考片段。"""
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, str | int]] = []
+        self._total_length = 0
+
+    def start(self) -> dict[str, str | int]:
+        """创建新一轮思考记录。"""
+        round_number = len(self.records) + 1
+        record: dict[str, str | int] = {
+            "reasoning_id": f"agent-{round_number}",
+            "phase": "agent",
+            "round_number": round_number,
+            "content": "",
+        }
+        self.records.append(record)
+        return record
+
+    def append(self, record: dict[str, str | int], content: str) -> str:
+        """追加思考内容，并限制单轮与整条消息的持久化长度。"""
+        current_length = len(str(record["content"]))
+        allowed = min(
+            _MAX_REASONING_SEGMENT_LENGTH - current_length,
+            _MAX_REASONING_TOTAL_LENGTH - self._total_length,
+        )
+        if allowed <= 0:
+            return ""
+        safe_content = content[:allowed]
+        record["content"] = f"{record['content']}{safe_content}"
+        self._total_length += len(safe_content)
+        return safe_content
+
+
+def _reasoning_content_from_chunk(chunk: AIMessageChunk) -> str:
+    """提取模型适配层规范化后的结构化思考字段。"""
+    additional_kwargs = chunk.additional_kwargs
+    if not isinstance(additional_kwargs, dict):
+        return ""
+    for field_name in ("reasoning_content", "reasoning", "thinking"):
+        value = additional_kwargs.get(field_name)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
 
 def _sse_event(event_type: str, session_id: str, trace_id: str, payload: dict[str, Any]) -> str:
     """组装一条 SSE data 行。"""
@@ -279,6 +381,10 @@ class AiService:
         full_response: list[str] = []
         final_content = ""
         response_sources: list[dict[str, str | float | None]] = []
+        reasoning_parser = _ThinkTagStreamParser()
+        reasoning_collector = _ReasoningCollector()
+        active_reasoning: dict[str, str | int] | None = None
+        active_reasoning_is_tagged = False
         seen_tool_calls: set[str] = set()
         seen_tool_results: set[str] = set()
         paused = False
@@ -316,16 +422,130 @@ class AiService:
                             continue
                         if not isinstance(token, AIMessageChunk):
                             continue
+                        structured_reasoning = _reasoning_content_from_chunk(token)
+                        if structured_reasoning:
+                            if active_reasoning is None:
+                                active_reasoning = reasoning_collector.start()
+                                active_reasoning_is_tagged = False
+                            reasoning_content = reasoning_collector.append(
+                                active_reasoning, structured_reasoning
+                            )
+                            if reasoning_content:
+                                yield _sse_event(
+                                    "reasoning_token",
+                                    session_id,
+                                    trace_id,
+                                    {
+                                        "content": reasoning_content,
+                                        "reasoning_id": active_reasoning["reasoning_id"],
+                                        "phase": active_reasoning["phase"],
+                                        "round_number": active_reasoning["round_number"],
+                                    },
+                                )
                         content = token.content
                         if isinstance(content, str) and content:
-                            full_response.append(content)
-                            yield _sse_event("token", session_id, trace_id, {"content": content})
+                            if active_reasoning is not None and not active_reasoning_is_tagged:
+                                yield _sse_event(
+                                    "reasoning_done",
+                                    session_id,
+                                    trace_id,
+                                    {
+                                        "reasoning_id": active_reasoning["reasoning_id"],
+                                        "round_number": active_reasoning["round_number"],
+                                    },
+                                )
+                                active_reasoning = None
+                                full_response.append(content)
+                                yield _sse_event("token", session_id, trace_id, {"content": content})
+                                continue
+
+                            reasoning_parts, answer_parts, reasoning_finished = reasoning_parser.feed(content)
+                            for reasoning_part in reasoning_parts:
+                                if active_reasoning is None:
+                                    active_reasoning = reasoning_collector.start()
+                                    active_reasoning_is_tagged = True
+                                reasoning_content = reasoning_collector.append(active_reasoning, reasoning_part)
+                                if reasoning_content:
+                                    yield _sse_event(
+                                        "reasoning_token",
+                                        session_id,
+                                        trace_id,
+                                        {
+                                            "content": reasoning_content,
+                                            "reasoning_id": active_reasoning["reasoning_id"],
+                                            "phase": active_reasoning["phase"],
+                                            "round_number": active_reasoning["round_number"],
+                                        },
+                                    )
+                            if reasoning_finished and active_reasoning is not None:
+                                yield _sse_event(
+                                    "reasoning_done",
+                                    session_id,
+                                    trace_id,
+                                    {
+                                        "reasoning_id": active_reasoning["reasoning_id"],
+                                        "round_number": active_reasoning["round_number"],
+                                    },
+                                )
+                                active_reasoning = None
+                                active_reasoning_is_tagged = False
+                            for answer_part in answer_parts:
+                                if active_reasoning is not None:
+                                    yield _sse_event(
+                                        "reasoning_done",
+                                        session_id,
+                                        trace_id,
+                                        {
+                                            "reasoning_id": active_reasoning["reasoning_id"],
+                                            "round_number": active_reasoning["round_number"],
+                                        },
+                                    )
+                                    active_reasoning = None
+                                    active_reasoning_is_tagged = False
+                                full_response.append(answer_part)
+                                yield _sse_event("token", session_id, trace_id, {"content": answer_part})
                         continue
 
                     if stream_mode != "updates" or not isinstance(chunk, dict):
                         continue
 
-                    for message in _messages_from_update(chunk, "agent"):
+                    agent_messages = _messages_from_update(chunk, "agent")
+                    if agent_messages:
+                        reasoning_parts, answer_parts, _ = reasoning_parser.finish()
+                        for reasoning_part in reasoning_parts:
+                            if active_reasoning is None:
+                                active_reasoning = reasoning_collector.start()
+                                active_reasoning_is_tagged = True
+                            reasoning_content = reasoning_collector.append(active_reasoning, reasoning_part)
+                            if reasoning_content:
+                                yield _sse_event(
+                                    "reasoning_token",
+                                    session_id,
+                                    trace_id,
+                                    {
+                                        "content": reasoning_content,
+                                        "reasoning_id": active_reasoning["reasoning_id"],
+                                        "phase": active_reasoning["phase"],
+                                        "round_number": active_reasoning["round_number"],
+                                    },
+                                )
+                        if active_reasoning is not None:
+                            yield _sse_event(
+                                "reasoning_done",
+                                session_id,
+                                trace_id,
+                                {
+                                    "reasoning_id": active_reasoning["reasoning_id"],
+                                    "round_number": active_reasoning["round_number"],
+                                },
+                            )
+                            active_reasoning = None
+                            active_reasoning_is_tagged = False
+                        for answer_part in answer_parts:
+                            full_response.append(answer_part)
+                            yield _sse_event("token", session_id, trace_id, {"content": answer_part})
+
+                    for message in agent_messages:
                         if not isinstance(message, AIMessage):
                             continue
                         if not message.tool_calls:
@@ -447,6 +667,39 @@ class AiService:
             if paused:
                 return
 
+            reasoning_parts, answer_parts, _ = reasoning_parser.finish()
+            for reasoning_part in reasoning_parts:
+                if active_reasoning is None:
+                    active_reasoning = reasoning_collector.start()
+                    active_reasoning_is_tagged = True
+                reasoning_content = reasoning_collector.append(active_reasoning, reasoning_part)
+                if reasoning_content:
+                    yield _sse_event(
+                        "reasoning_token",
+                        session_id,
+                        trace_id,
+                        {
+                            "content": reasoning_content,
+                            "reasoning_id": active_reasoning["reasoning_id"],
+                            "phase": active_reasoning["phase"],
+                            "round_number": active_reasoning["round_number"],
+                        },
+                    )
+            if active_reasoning is not None:
+                yield _sse_event(
+                    "reasoning_done",
+                    session_id,
+                    trace_id,
+                    {
+                        "reasoning_id": active_reasoning["reasoning_id"],
+                        "round_number": active_reasoning["round_number"],
+                    },
+                )
+                active_reasoning = None
+            for answer_part in answer_parts:
+                full_response.append(answer_part)
+                yield _sse_event("token", session_id, trace_id, {"content": answer_part})
+
             answer = "".join(full_response) or final_content
             if answer and not full_response:
                 yield _sse_event("token", session_id, trace_id, {"content": answer})
@@ -458,6 +711,7 @@ class AiService:
                         "assistant",
                         answer,
                         sources=response_sources,
+                        reasoning=[record for record in reasoning_collector.records if record["content"]],
                     )
                     await ToolCallService(db).link_message(record_trace_id, message.id)
                     await SessionService(db).touch(sid)

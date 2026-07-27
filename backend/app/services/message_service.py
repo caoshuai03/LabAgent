@@ -31,6 +31,7 @@ class MessageService:
         role: str,
         content: str,
         sources: list[dict[str, str | float | None]] | None = None,
+        reasoning: list[dict[str, str | int]] | None = None,
     ) -> ChatMessage:
         """持久化一条消息。"""
         message = ChatMessage(
@@ -39,6 +40,7 @@ class MessageService:
             role=role,
             content=content,
             sources=sources,
+            reasoning=reasoning,
         )
         return await self.repo.add(message)
 
@@ -68,6 +70,7 @@ class MessageService:
                 role=m.role,
                 content=m.content,
                 sources=m.sources or [],
+                reasoning=m.reasoning or [],
                 tool_calls=calls_by_message.get(m.id, []),
                 created_at=m.created_at,
             )

@@ -214,6 +214,15 @@ watch(
   overflow: hidden;
 }
 
+.workspace-preview-panel.switching-collapse {
+  .preview-header,
+  .preview-toolbar,
+  .preview-content,
+  .preview-empty {
+    visibility: hidden;
+  }
+}
+
 .preview-header {
   display: flex;
   align-items: center;

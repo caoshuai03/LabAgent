@@ -13,7 +13,11 @@
 
     <WorkspacePreviewPanel
       class="preview-panel-shell"
-      :class="{ open: chatStore.previewPanelOpen, dragging: isDragging }"
+      :class="{
+        open: chatStore.previewPanelOpen,
+        dragging: isDragging,
+        'switching-collapse': chatStore.previewPanelSwitchingCollapse,
+      }"
       :aria-hidden="!chatStore.previewPanelOpen"
       :style="{ width: chatStore.previewPanelOpen ? `${chatStore.previewPanelWidth}px` : '0px' }"
     />
@@ -43,7 +47,7 @@
 </template>
 
 <script setup>
-import { onMounted, onActivated, onBeforeUnmount, ref } from 'vue'
+import { onMounted, onActivated, onBeforeUnmount, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import Sidebar from '../components/Sidebar.vue'
 import ChatMain from '../components/ChatMain.vue'
@@ -57,10 +61,39 @@ const chatStore = useChatStore()
 
 // 拖拽分隔条调节预览侧栏宽度（侧栏在右侧，向左拖变宽）
 const isDragging = ref(false)
+const MAIN_CONTENT_MIN_WIDTH = 480
+const PREVIEW_RESIZER_WIDTH = 2
+const PREVIEW_PANEL_MIN_WIDTH = 260
+
+const getSidebarReservedWidth = () => {
+  if (chatStore.sidebarCollapsed || window.innerWidth <= 768) {
+    return 0
+  }
+
+  return chatStore.sidebarWidth
+}
+
+const getPreviewPanelMaxWidth = () => {
+  const remainingWidth = window.innerWidth
+    - getSidebarReservedWidth()
+    - MAIN_CONTENT_MIN_WIDTH
+    - PREVIEW_RESIZER_WIDTH
+  return Math.max(PREVIEW_PANEL_MIN_WIDTH, remainingWidth)
+}
+
+const keepPreviewPanelWithinViewport = () => {
+  if (!chatStore.previewPanelOpen) return
+
+  chatStore.setPreviewPanelWidth(
+    Math.min(chatStore.previewPanelWidth, getPreviewPanelMaxWidth()),
+  )
+}
 
 const onDragMove = (event) => {
   // 侧栏宽度 = 视口右边界 - 鼠标位置
-  chatStore.setPreviewPanelWidth(window.innerWidth - event.clientX)
+  chatStore.setPreviewPanelWidth(
+    Math.min(window.innerWidth - event.clientX, getPreviewPanelMaxWidth()),
+  )
 }
 
 const stopDrag = () => {
@@ -91,6 +124,8 @@ onMounted(async () => {
 
   // 从数据库加载会话（异步操作）
   await chatStore.initialize()
+  keepPreviewPanelWithinViewport()
+  window.addEventListener('resize', keepPreviewPanelWithinViewport)
 })
 
 /**
@@ -105,7 +140,15 @@ onActivated(async () => {
 
 onBeforeUnmount(() => {
   stopDrag()
+  window.removeEventListener('resize', keepPreviewPanelWithinViewport)
 })
+
+watch(
+  () => [chatStore.previewPanelOpen, chatStore.sidebarCollapsed, chatStore.sidebarWidth],
+  () => {
+    window.requestAnimationFrame(keepPreviewPanelWithinViewport)
+  },
+)
 </script>
 
 <style lang="scss" scoped>
@@ -153,6 +196,12 @@ onBeforeUnmount(() => {
 
   &.dragging {
     transition: none;
+  }
+
+  &.switching-collapse {
+    transition:
+      width 0.16s ease,
+      visibility 0s linear 0.16s;
   }
 }
 

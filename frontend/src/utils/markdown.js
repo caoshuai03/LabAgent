@@ -50,3 +50,33 @@ export const renderMarkdown = (content) => {
   if (!content) return ''
   return md.render(content)
 }
+
+const normalizeArtifactPath = (path) => String(path || '').replace(/\\/g, '/').replace(/^\.\/+/, '')
+
+const artifactPathCandidates = (path) => {
+  const normalized = normalizeArtifactPath(path)
+  if (!normalized) return []
+  const fileName = normalized.split('/').pop() || normalized
+  return [normalized, fileName]
+}
+
+// 部分模型在最终回答末尾会把刚生成的文件名再包一层 bash/text 代码块输出。
+// 工具事件已经承载了产物路径和预览能力，这类孤立尾块会造成重复展示，渲染前直接移除。
+export const stripTrailingArtifactCodeBlock = (content, artifactPaths = []) => {
+  if (!content) return ''
+  const candidates = new Set()
+  ;(Array.from(artifactPaths || [])).forEach((path) => {
+    artifactPathCandidates(path).forEach((candidate) => candidates.add(candidate))
+  })
+  if (candidates.size === 0) return content
+
+  const trailingFencePattern =
+    /(?:^|\n)(?:[^\S\r\n]*(?:你可以在工作区中查看文件|可以在工作区中查看文件|文件路径|查看文件|路径)[:：]?[^\S\r\n]*\n+)?[^\S\r\n]*```(?:bash|sh|shell|text|txt)?[^\S\r\n]*\n([^\r\n]+)[^\S\r\n]*\n```[^\S\r\n]*$/i
+  const match = content.match(trailingFencePattern)
+  if (!match) return content
+
+  const codePath = normalizeArtifactPath(match[1].trim())
+  if (!candidates.has(codePath)) return content
+
+  return content.slice(0, match.index).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}$/g, '\n\n').trimEnd()
+}

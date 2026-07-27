@@ -2,6 +2,12 @@
   <div :class="['message-item', `message-${message.sender}`]">
     <div class="message-container">
       <div class="message-content">
+        <ReasoningPanel
+          v-if="message.sender === 'assistant' && message.reasoning?.length"
+          :reasoning="message.reasoning"
+          @toggle="handleReasoningToggle"
+        />
+
         <ToolActivityPanel
           v-if="message.sender === 'assistant' && message.toolEvents?.length"
           :tool-events="message.toolEvents"
@@ -72,8 +78,9 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
-import { renderMarkdown } from '../utils/markdown'
+import { renderMarkdown, stripTrailingArtifactCodeBlock } from '../utils/markdown'
 import { escapeHtml } from '../utils/html'
+import ReasoningPanel from './ReasoningPanel.vue'
 import ToolActivityPanel from './ToolActivityPanel.vue'
 import ToolApprovalInline from './ToolApprovalInline.vue'
 
@@ -118,6 +125,10 @@ const sources = computed(() => {
   return Array.isArray(props.message.sources) ? props.message.sources : []
 })
 
+const handleReasoningToggle = (reasoningId) => {
+  chatStore.toggleMessageReasoning(props.message.id, reasoningId)
+}
+
 const showInlineApproval = computed(() => {
   if (!chatStore.pendingApproval || props.message.sender !== 'assistant') return false
   const messages = chatStore.messages || []
@@ -134,11 +145,22 @@ const formatContent = (content) => {
   if (!content) return ''
 
   if (props.message.sender === 'assistant') {
-    return renderMarkdown(content)
+    return renderMarkdown(stripTrailingArtifactCodeBlock(content, messageArtifactPaths.value))
   }
 
   return escapeHtml(content).replace(/\n/g, '<br>').replace(/ {2}/g, '&nbsp;&nbsp;')
 }
+
+const messageArtifactPaths = computed(() => {
+  const paths = new Set()
+  ;(props.message.toolEvents || []).forEach((event) => {
+    const payload = event?.payload || {}
+    if (payload.tool_name !== 'write_file') return
+    const path = payload.preview_path || payload.arguments?.file_path
+    if (path) paths.add(path)
+  })
+  return paths
+})
 
 const handleCopy = async () => {
   try {

@@ -244,12 +244,13 @@ onBeforeUnmount(() => {
   transition: all 0.2s;
   height: 36px;
 
-  &:hover {
-    background-color: rgba(144, 19, 139, 0.03);
-  }
-
   &.active {
     background-color: var(--bg-active);
+  }
+
+  &:hover,
+  &.active:hover {
+    background-color: rgba(144, 19, 139, 0.05);
   }
 
   &.selected {

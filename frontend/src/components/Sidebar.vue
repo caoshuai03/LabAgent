@@ -1,8 +1,22 @@
 <template>
-  <div :class="['sidebar', { collapsed: chatStore.sidebarCollapsed }]">
+  <div
+    :class="[
+      'sidebar',
+      {
+        collapsed: chatStore.sidebarCollapsed && !isAnimatingCollapse,
+        resizing:
+          isResizing
+          && !chatStore.sidebarCollapsed
+          && !isCollapsingByDrag
+          && !isExpandingByDrag,
+        'collapsing-transition': isAnimatingCollapse,
+      },
+    ]"
+    :style="{ width: chatStore.sidebarCollapsed ? '0px' : `${chatStore.sidebarWidth}px` }"
+  >
     <div class="sidebar-header">
       <div class="sidebar-top">
-        <div class="logo-area" v-if="!chatStore.sidebarCollapsed" @click="handleNewConversation">
+        <div class="logo-area" v-if="showExpandedSidebar" @click="handleNewConversation">
           <img src="../assets/logo.png" alt="JavaLab Logo" class="logo-img" />
         </div>
         <button
@@ -10,7 +24,7 @@
           class="toggle-button"
           v-tooltip="chatStore.sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
         >
-          <ChevronLeftIcon v-if="!chatStore.sidebarCollapsed" :size="16" />
+          <ChevronLeftIcon v-if="showExpandedSidebar" :size="16" />
           <ChevronRightIcon v-else :size="16" />
         </button>
       </div>
@@ -21,7 +35,7 @@
           v-tooltip="chatStore.sidebarCollapsed ? '新建对话' : ''"
         >
           <PlusIcon :size="18" />
-          <span v-if="!chatStore.sidebarCollapsed">新聊天</span>
+          <span v-if="showExpandedSidebar">新聊天</span>
         </button>
 
         <button
@@ -30,7 +44,7 @@
           v-tooltip="chatStore.sidebarCollapsed ? '知识库' : ''"
         >
           <FolderIcon :size="18" />
-          <span v-if="!chatStore.sidebarCollapsed">知识库</span>
+          <span v-if="showExpandedSidebar">知识库</span>
         </button>
 
         <button
@@ -39,24 +53,24 @@
           v-tooltip="chatStore.sidebarCollapsed ? 'Skills' : ''"
         >
           <BookIcon :size="18" />
-          <span v-if="!chatStore.sidebarCollapsed">Skills</span>
+          <span v-if="showExpandedSidebar">Skills</span>
         </button>
       </div>
     </div>
 
-    <div class="list-header" v-if="!chatStore.sidebarCollapsed">
+    <div class="list-header" v-if="showExpandedSidebar">
       <span class="title">历史会话</span>
     </div>
 
     <ConversationList
-      v-if="!chatStore.sidebarCollapsed"
+      v-if="showExpandedSidebar"
       :is-selection-mode="isSelectionMode"
       :selected-ids="selectedIds"
       @update:selected-ids="(val) => (selectedIds = val)"
       @enterBatchMode="handleEnterBatchModeFromItem"
     />
 
-    <div class="sidebar-bottom" v-if="isSelectionMode && !chatStore.sidebarCollapsed">
+    <div class="sidebar-bottom" v-if="isSelectionMode && showExpandedSidebar">
       <div class="batch-actions">
         <button class="batch-btn cancel" @click="cancelSelectionMode">取消</button>
         <button
@@ -72,11 +86,18 @@
     <div class="sidebar-bottom" v-else>
       <UserProfile />
     </div>
+
+    <div
+      v-if="showExpandedSidebar"
+      class="sidebar-resizer"
+      :class="{ resizing: isResizing }"
+      @mousedown="startResize"
+    ></div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import ConversationList from './ConversationList.vue'
@@ -96,6 +117,14 @@ defineOptions({ name: 'AppSidebar' })
 
 const isSelectionMode = ref(false)
 const selectedIds = ref([])
+const isResizing = ref(false)
+const isCollapsingByDrag = ref(false)
+const isExpandingByDrag = ref(false)
+const isAnimatingCollapse = ref(false)
+const SIDEBAR_TRANSITION_MS = 340
+let collapseAnimationTimer = null
+let expandByDragTimer = null
+const showExpandedSidebar = computed(() => !chatStore.sidebarCollapsed || isAnimatingCollapse.value)
 
 const cancelSelectionMode = () => {
   isSelectionMode.value = false
@@ -142,6 +171,66 @@ const handleSkillsManagement = () => {
   router.push('/skills')
 }
 
+const stopResize = () => {
+  isResizing.value = false
+  isCollapsingByDrag.value = false
+  isExpandingByDrag.value = false
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  window.removeEventListener('mousemove', handleResizeMove)
+  window.removeEventListener('mouseup', stopResize)
+}
+
+const clearCollapseAnimationTimer = () => {
+  if (!collapseAnimationTimer) return
+  window.clearTimeout(collapseAnimationTimer)
+  collapseAnimationTimer = null
+}
+
+const clearExpandByDragTimer = () => {
+  if (!expandByDragTimer) return
+  window.clearTimeout(expandByDragTimer)
+  expandByDragTimer = null
+}
+
+const handleResizeMove = (event) => {
+  const collapseThreshold = chatStore.sidebarWidth / 2
+
+  if (event.clientX <= collapseThreshold) {
+    isExpandingByDrag.value = false
+    clearExpandByDragTimer()
+    if (!chatStore.sidebarCollapsed && !isCollapsingByDrag.value) {
+      isCollapsingByDrag.value = true
+      window.requestAnimationFrame(() => {
+        if (isCollapsingByDrag.value) {
+          chatStore.sidebarCollapsed = true
+        }
+      })
+    }
+    return
+  }
+
+  isCollapsingByDrag.value = false
+  if (chatStore.sidebarCollapsed && !isExpandingByDrag.value) {
+    isExpandingByDrag.value = true
+    clearExpandByDragTimer()
+    expandByDragTimer = window.setTimeout(() => {
+      isExpandingByDrag.value = false
+      expandByDragTimer = null
+    }, SIDEBAR_TRANSITION_MS)
+  }
+  chatStore.sidebarCollapsed = false
+  chatStore.setSidebarWidth(event.clientX)
+}
+
+const startResize = () => {
+  isResizing.value = true
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+  window.addEventListener('mousemove', handleResizeMove)
+  window.addEventListener('mouseup', stopResize)
+}
+
 // 判断当前路由是否与某个导航项匹配，便于给选中的入口加背景高亮
 // “新聊天”只在新对话状态下高亮，避免和历史会话的选中状态互相覆盖
 const isNavActive = (path) => {
@@ -151,27 +240,60 @@ const isNavActive = (path) => {
 
   return route.path === path
 }
+
+watch(
+  () => chatStore.sidebarCollapsed,
+  (collapsed) => {
+    clearCollapseAnimationTimer()
+    if (!collapsed) {
+      isAnimatingCollapse.value = false
+      return
+    }
+
+    isAnimatingCollapse.value = true
+    collapseAnimationTimer = window.setTimeout(() => {
+      isAnimatingCollapse.value = false
+      collapseAnimationTimer = null
+    }, SIDEBAR_TRANSITION_MS)
+  },
+)
+
+onBeforeUnmount(() => {
+  stopResize()
+  clearCollapseAnimationTimer()
+  clearExpandByDragTimer()
+})
 </script>
 
 <style lang="scss" scoped>
 .sidebar {
-  width: 260px;
+  --sidebar-transition-duration: 0.34s;
+  --sidebar-transition-easing: cubic-bezier(0.2, 0, 0, 1);
   height: 100vh;
   background-color: var(--bg-secondary);
   display: flex;
   flex-direction: column;
   transition:
-    width 0.3s ease,
-    background-color 0.3s ease;
+    width var(--sidebar-transition-duration) var(--sidebar-transition-easing),
+    background-color var(--sidebar-transition-duration) var(--sidebar-transition-easing);
   border-right: none;
   flex-shrink: 0;
   position: relative;
+  min-width: 0;
 
   &.collapsed {
-    width: 0;
     overflow: visible;
     background-color: transparent;
     border-right: none;
+  }
+
+  &.collapsing-transition {
+    overflow: hidden;
+    background-color: var(--bg-secondary);
+  }
+
+  &.resizing {
+    transition: none;
   }
 
   // 移动端响应式
@@ -182,26 +304,43 @@ const isNavActive = (path) => {
     z-index: 1000;
     transform: translateX(0);
     transition:
-      transform 0.3s ease,
-      background-color 0.3s ease,
-      width 0.3s ease;
+      transform var(--sidebar-transition-duration) var(--sidebar-transition-easing),
+      background-color var(--sidebar-transition-duration) var(--sidebar-transition-easing),
+      width var(--sidebar-transition-duration) var(--sidebar-transition-easing);
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
 
     &.collapsed {
       transform: translateX(-260px);
-      width: 0;
       overflow: hidden;
     }
   }
 
   // 平板响应式
   @media (min-width: 769px) and (max-width: 1024px) {
-    width: 220px;
-
     &.collapsed {
-      width: 0;
       overflow: hidden;
     }
+  }
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  z-index: 20;
+  width: 2px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+
+  &:hover,
+  &.resizing {
+    background: var(--primary-color, #90138b);
+  }
+
+  @media (max-width: 768px) {
+    display: none;
   }
 }
 

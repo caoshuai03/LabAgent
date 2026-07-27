@@ -26,6 +26,9 @@ class ChatMessage(Base):
     sources: Mapped[list[dict[str, str | float | None]] | None] = mapped_column(
         JSONB, nullable=True, comment="RAG引用来源"
     )
+    reasoning: Mapped[list[dict[str, str | int]] | None] = mapped_column(
+        JSONB, nullable=True, comment="主Agent思考过程"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), comment="创建时间"
     )

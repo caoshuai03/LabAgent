@@ -129,6 +129,7 @@ class ModelProvider:
             model=model_name,
             endpoint_pool=self._ollama_endpoint_pool,
             operation_name=operation_name,
+            reasoning=True if operation_name == "agent" else None,
             client_kwargs={"timeout": _REQUEST_TIMEOUT},
         )
 

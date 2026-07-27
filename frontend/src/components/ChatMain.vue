@@ -1,7 +1,7 @@
 <template>
   <div
     class="chat-main"
-    :class="{ 'is-empty': chatStore.messages.length === 0 }"
+    :class="{ 'is-empty': chatStore.messages.length === 0 && !isHistorySwitching }"
     @click="handleMainClick"
   >
     <!-- 移动端顶部菜单入口 -->
@@ -16,11 +16,11 @@
     </div>
 
     <MessageList
-      v-show="chatStore.messages.length > 0"
+      v-show="chatStore.messages.length > 0 || isHistorySwitching"
       @approval-decision="handleApprovalDecision"
     />
 
-    <div v-if="chatStore.messages.length === 0" class="welcome-container">
+    <div v-if="chatStore.messages.length === 0 && !isHistorySwitching" class="welcome-container">
       <div class="welcome-content">
         <template v-if="chatStore.historyLoadError">
           <h2>
@@ -75,6 +75,10 @@ const SWITCH_DELAY = 260
 
 const showMobileMenuButton = computed(() => {
   return isMobile.value && chatStore.sidebarCollapsed
+})
+
+const isHistorySwitching = computed(() => {
+  return Boolean(chatStore.currentConversationId && chatStore.isLoading && chatStore.messages.length === 0)
 })
 
 const toggleSidebar = () => {
@@ -144,11 +148,11 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .chat-main {
-  flex: 1;
+  flex: 1 0 min(480px, 100vw);
   display: flex;
   flex-direction: column;
   height: 100vh;
-  min-width: 0;
+  min-width: min(480px, 100vw);
   position: relative;
   overflow: hidden;
   --chat-content-max-width: 720px;

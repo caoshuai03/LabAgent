@@ -301,6 +301,7 @@ const finalizeStreamTask = async (conversationKey, { abort = false, refreshConve
   }
 
   chatStore.markLastAssistantMessageComplete(conversationKey)
+  chatStore.completeLastMessageReasoning(null, conversationKey)
   chatStore.clearPendingApproval(conversationKey)
   chatStore.setConversationStreaming(conversationKey, false)
   chatStore.setConversationLoading(conversationKey, false)
@@ -504,6 +505,16 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
     return
   }
 
+  if (event.event_type === 'reasoning_token') {
+    chatStore.appendReasoningToLastMessage(payload, streamTask.conversationKey)
+    return
+  }
+
+  if (event.event_type === 'reasoning_done') {
+    chatStore.completeLastMessageReasoning(payload.reasoning_id || null, streamTask.conversationKey)
+    return
+  }
+
   if (event.event_type === 'sources') {
     chatStore.setLastMessageSources(payload.sources || [], streamTask.conversationKey)
     return
@@ -562,10 +573,12 @@ const handleStreamEvent = (event, streamTask, lastMessage) => {
 
   if (event.event_type === 'paused') {
     streamTask.paused = true
+    chatStore.completeLastMessageReasoning(null, streamTask.conversationKey)
     return
   }
 
   if (event.event_type === 'error') {
+    chatStore.completeLastMessageReasoning(null, streamTask.conversationKey)
     const message = payload.message || '请求失败'
     if (!lastMessage.content) {
       lastMessage.content = `错误: ${message}`
