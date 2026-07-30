@@ -5,18 +5,35 @@
 """
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.knowledge import KbSourceVO
 from app.schemas.tool import ChatToolCallVO
 
 
+class ChatImageVO(BaseModel):
+    """聊天图片附件元数据，不向前端暴露存储路径。"""
+
+    image_id: str
+    file_name: str
+    content_type: str
+    size: int
+
+
 class ChatRequest(BaseModel):
     """RAG/Agent 对话请求。userId 一律忽略，以 JWT 为准。"""
 
-    message: str | None = Field(default="你好", description="用户消息")
+    message: str = Field(default="", max_length=100_000, description="用户消息")
     session_id: str | None = Field(default=None, description="会话ID，为空时创建新会话")
     model: str | None = Field(default=None, description="大模型名称")
+    images: list[ChatImageVO] = Field(default_factory=list, max_length=10, description="聊天图片")
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "ChatRequest":
+        """文本与图片至少提供一种。"""
+        if not self.message.strip() and not self.images:
+            raise ValueError("消息和图片不能同时为空")
+        return self
 
 
 class HistoryRequest(BaseModel):
@@ -48,6 +65,7 @@ class ChatMessageVO(BaseModel):
     session_id: str
     role: str
     content: str | None
+    images: list[ChatImageVO] = Field(default_factory=list)
     sources: list[KbSourceVO] = Field(default_factory=list)
     reasoning: list[ChatReasoningVO] = Field(default_factory=list)
     tool_calls: list[ChatToolCallVO] = Field(default_factory=list)

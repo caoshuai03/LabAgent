@@ -71,12 +71,24 @@ export const deleteSessions = (sessionIds) => {
  * @returns {AbortController} 用于取消请求的控制器
  */
 export const sendReactAgentMessage = (params, callbacks) => {
-  const { message, sessionId = '', model } = params
+  const { message, sessionId = '', model, images = [] } = params
   return sendSseRequest(
     buildApiUrl('/v1/ai/react-agent'),
-    { message, session_id: sessionId, model },
+    { message, session_id: sessionId, model, images },
     callbacks,
   )
+}
+
+export const uploadChatImage = (file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return apiClient.post('/v1/ai/images', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const getChatImage = (imageId) => {
+  return apiClient.get(`/v1/ai/images/${imageId}`, { responseType: 'blob' })
 }
 
 export const resumeReactAgent = (params, callbacks) => {

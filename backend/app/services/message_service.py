@@ -12,7 +12,7 @@ from app.models.chat_message import ChatMessage
 from app.repositories.chat_message_repository import ChatMessageRepository
 from app.repositories.chat_session_repository import ChatSessionRepository
 from app.repositories.tool_call_repository import ToolCallRepository
-from app.schemas.chat import ChatMessageVO
+from app.schemas.chat import ChatImageVO, ChatMessageVO
 from app.schemas.tool import ChatToolCallVO
 
 
@@ -32,6 +32,7 @@ class MessageService:
         content: str,
         sources: list[dict[str, str | float | None]] | None = None,
         reasoning: list[dict[str, str | int]] | None = None,
+        images: list[dict[str, str | int]] | None = None,
     ) -> ChatMessage:
         """持久化一条消息。"""
         message = ChatMessage(
@@ -41,6 +42,7 @@ class MessageService:
             content=content,
             sources=sources,
             reasoning=reasoning,
+            images=images,
         )
         return await self.repo.add(message)
 
@@ -69,6 +71,7 @@ class MessageService:
                 session_id=str(m.session_id),
                 role=m.role,
                 content=m.content,
+                images=[ChatImageVO.model_validate(image) for image in (m.images or [])],
                 sources=m.sources or [],
                 reasoning=m.reasoning or [],
                 tool_calls=calls_by_message.get(m.id, []),

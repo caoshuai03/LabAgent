@@ -29,6 +29,9 @@ class ChatMessage(Base):
     reasoning: Mapped[list[dict[str, str | int]] | None] = mapped_column(
         JSONB, nullable=True, comment="主Agent思考过程"
     )
+    images: Mapped[list[dict[str, str | int]] | None] = mapped_column(
+        JSONB, nullable=True, comment="用户消息图片附件"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), comment="创建时间"
     )

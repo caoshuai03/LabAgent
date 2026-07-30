@@ -1,6 +1,24 @@
 <template>
   <div class="chat-input-container">
     <div class="input-wrapper" :class="{ expanded: isExpanded }">
+      <div v-if="pendingImages.length" class="pending-images">
+        <div
+          v-for="(image, index) in pendingImages"
+          :key="image.preview_url"
+          class="pending-image"
+        >
+          <img :src="image.preview_url" :alt="image.file.name" />
+          <button
+            type="button"
+            class="remove-image-button"
+            :aria-label="`移除图片 ${image.file.name}`"
+            @click="removePendingImage(index)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
       <textarea
         ref="inputRef"
         v-model="inputText"
@@ -16,15 +34,19 @@
         rows="1"
         @keydown="handleKeyDown"
         @input="handleInput"
+        @paste="handlePaste"
       ></textarea>
 
       <div class="input-footer">
         <div class="input-left-actions">
           <button
             type="button"
-            class="action-button attach-button disabled-btn"
-            v-tooltip="'附件上传功能开发中'"
-            aria-label="附件上传功能开发中"
+            class="action-button attach-button"
+            :class="{ 'disabled-btn': !canSelectImages }"
+            :disabled="!canSelectImages"
+            v-tooltip="'上传图片'"
+            aria-label="上传图片"
+            @click="imageInputRef?.click()"
           >
             <svg
               stroke="currentColor"
@@ -41,6 +63,14 @@
               <path d="M5 12h14"></path>
             </svg>
           </button>
+          <input
+            ref="imageInputRef"
+            class="image-file-input"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            @change="handleImageSelection"
+          />
 
           <button
             type="button"
@@ -169,6 +199,7 @@ import {
   getSessionTitle,
   resumeReactAgent,
   sendReactAgentMessage,
+  uploadChatImage,
 } from '../api/chat'
 import { AVAILABLE_MODELS } from '../constants/models'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
@@ -179,15 +210,21 @@ const toast = useToast()
 
 const inputText = ref('')
 const inputRef = ref(null)
+const imageInputRef = ref(null)
+const pendingImages = ref([])
 const showScrollbar = ref(false)
 const isExpanded = ref(false)
 const showModelDropdown = ref(false)
 const isCompressing = ref(false)
+const isUploadingImages = ref(false)
 
 const MIN_HEIGHT = 24
 const MAX_HEIGHT = 320
 const EXPAND_TRIGGER_HEIGHT = 84
 const COLLAPSE_TRIGGER_HEIGHT = 56
+const MAX_IMAGE_COUNT = 10
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const TOOL_FAILURE_STAGES = new Set([
   'tool_failed',
   'tool_timeout',
@@ -209,11 +246,65 @@ let inputVisualSyncFrameId = 0
 
 const canSend = computed(() => {
   return (
-    inputText.value.trim().length > 0 &&
+    (inputText.value.trim().length > 0 || pendingImages.value.length > 0) &&
     !chatStore.isStreaming &&
-    !chatStore.awaitingApproval
+    !chatStore.awaitingApproval &&
+    !isUploadingImages.value
   )
 })
+
+const canSelectImages = computed(() => {
+  return (
+    !chatStore.isStreaming &&
+    !chatStore.awaitingApproval &&
+    !isUploadingImages.value &&
+    pendingImages.value.length < MAX_IMAGE_COUNT
+  )
+})
+
+const addPendingImages = (files) => {
+  const fileList = Array.from(files)
+  const availableCount = MAX_IMAGE_COUNT - pendingImages.value.length
+  const candidates = fileList.slice(0, availableCount)
+  if (fileList.length > availableCount) {
+    toast.info(`单次最多上传 ${MAX_IMAGE_COUNT} 张图片`)
+  }
+  candidates.forEach((file) => {
+    if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+      toast.error(`不支持图片类型：${file.name || file.type}`)
+      return
+    }
+    if (file.size <= 0 || file.size > MAX_IMAGE_SIZE_BYTES) {
+      toast.error(`图片 ${file.name || ''} 需小于 10MB`)
+      return
+    }
+    pendingImages.value.push({
+      file,
+      preview_url: URL.createObjectURL(file),
+    })
+  })
+}
+
+const handleImageSelection = (event) => {
+  addPendingImages(event.target.files || [])
+  event.target.value = ''
+}
+
+const handlePaste = (event) => {
+  if (!canSelectImages.value) return
+  const imageFiles = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter(Boolean)
+  if (!imageFiles.length) return
+  event.preventDefault()
+  addPendingImages(imageFiles)
+}
+
+const removePendingImage = (index) => {
+  const [removed] = pendingImages.value.splice(index, 1)
+  if (removed?.preview_url) URL.revokeObjectURL(removed.preview_url)
+}
 
 const canCompress = computed(() => {
   return Boolean(
@@ -516,23 +607,44 @@ const handleSend = async () => {
   closeModelDropdown()
 
   const message = inputText.value.trim()
-  if (!message) return
+  if (!message && !pendingImages.value.length) return
+
+  isUploadingImages.value = true
+  let uploadedImages
+  try {
+    uploadedImages = await Promise.all(
+      pendingImages.value.map(async ({ file, preview_url }) => {
+        const response = await uploadChatImage(file)
+        if (response.data?.code !== 0 || !response.data?.data) {
+          throw new Error(response.data?.message || '图片上传失败')
+        }
+        return { ...response.data.data, preview_url }
+      }),
+    )
+  } catch (error) {
+    toast.error(error.response?.data?.message || error.message || '图片上传失败')
+    return
+  } finally {
+    isUploadingImages.value = false
+  }
 
   const conversationKey = getOrCreateActiveConversationKey()
+  const titleMessage = message || '[图片]'
   const streamTask = {
     conversationKey,
-    currentUserMessage: message,
+    currentUserMessage: titleMessage,
     sessionIdReceived: false,
     shouldPollTitle: chatStore.isDraftConversationKey(conversationKey),
-    fallbackTitle: message.slice(0, 30),
+    fallbackTitle: titleMessage.slice(0, 30),
     abortController: null,
     traceId: null,
     paused: false,
   }
 
-  chatStore.addMessage('user', message, conversationKey)
+  chatStore.addMessage('user', message, conversationKey, uploadedImages)
 
   inputText.value = ''
+  pendingImages.value = []
   resetInputVisualState()
 
   chatStore.addMessage('assistant', '', conversationKey)
@@ -543,7 +655,17 @@ const handleSend = async () => {
   const model = chatStore.selectedModel
 
   streamTask.abortController = sendReactAgentMessage(
-    { message, sessionId, model },
+    {
+      message,
+      sessionId,
+      model,
+      images: uploadedImages.map((image) => ({
+        image_id: image.image_id,
+        file_name: image.file_name,
+        content_type: image.content_type,
+        size: image.size,
+      })),
+    },
     createStreamCallbacks(streamTask),
   )
 
@@ -745,6 +867,7 @@ onUnmounted(() => {
   streamTasks.clear()
   titlePollControllers.forEach((controller) => controller.abort())
   titlePollControllers.clear()
+  pendingImages.value.forEach((image) => URL.revokeObjectURL(image.preview_url))
 })
 </script>
 
@@ -840,11 +963,12 @@ onUnmounted(() => {
       background-color: transparent;
       border: none;
       color: #999;
-      cursor: not-allowed;
+      cursor: pointer;
       flex-shrink: 0;
 
       &.disabled-btn {
-        opacity: 0.8;
+        opacity: 0.45;
+        cursor: not-allowed;
       }
 
       &:hover:not(.disabled-btn) {
@@ -880,6 +1004,58 @@ onUnmounted(() => {
       }
     }
   }
+}
+
+.pending-images {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.pending-image {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+
+  img {
+    width: 100%;
+    height: 100%;
+    border: 1px solid rgba(229, 231, 235, 1);
+    border-radius: 12px;
+    background: #f7f7f8;
+    object-fit: contain;
+  }
+}
+
+.remove-image-button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(31, 41, 55, 0.88);
+  color: #fff;
+  font-size: 15px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.image-file-input {
+  display: none;
 }
 
 .chat-input {

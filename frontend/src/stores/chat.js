@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getUserSessions, getSessionHistory, deleteSession, deleteSessions } from '../api/chat'
+import {
+  deleteSession,
+  deleteSessions,
+  getChatImage,
+  getSessionHistory,
+  getUserSessions,
+} from '../api/chat'
 import { DEFAULT_MODEL } from '../constants/models'
 
 const CURRENT_CONVERSATION_STORAGE_KEY = 'chat_current_conversation_id'
@@ -236,7 +242,14 @@ export const useChatStore = defineStore('chat', () => {
    * 打开工作区文件预览（正文超链接点击触发）
    * @param {object} payload - { path, language?, content? }；content 为空时由预览面板按需拉取
    */
-  const openPreview = ({ path, language = '', content = null } = {}) => {
+  const openPreview = ({
+    path,
+    language = '',
+    content = null,
+    preview_type = 'text',
+    image_url = '',
+    download_name = '',
+  } = {}) => {
     if (!path) return
 
     const state = ensureConversationState(activeConversationKey.value)
@@ -249,11 +262,19 @@ export const useChatStore = defineStore('chat', () => {
         existing.content = content
         existing.language = language || existing.language
       }
+      if (image_url) {
+        existing.image_url = image_url
+      }
+      existing.preview_type = preview_type || existing.preview_type
+      existing.download_name = download_name || existing.download_name
     } else {
       state.previewTabs.push({
         path,
         language,
         content,
+        preview_type,
+        image_url,
+        download_name,
         loading: false,
         error: '',
       })
@@ -500,9 +521,15 @@ export const useChatStore = defineStore('chat', () => {
    * @param {string} sender - 发送者类型（'user' 或 'assistant'）
    * @param {string} content - 消息内容
    * @param {string} [conversationKey] - 会话 key
+   * @param {Array} [images] - 图片附件及本地预览地址
    * @returns {object|null} 消息对象
    */
-  const addMessage = (sender, content, conversationKey = activeConversationKey.value) => {
+  const addMessage = (
+    sender,
+    content,
+    conversationKey = activeConversationKey.value,
+    images = [],
+  ) => {
     const state = ensureConversationState(conversationKey)
     if (!state) return null
 
@@ -510,6 +537,7 @@ export const useChatStore = defineStore('chat', () => {
       id: generateMessageId(),
       sender: sender,
       content: content,
+      images,
       timestamp: new Date().toISOString(),
       toolEvents: [],
       sources: [],
@@ -742,6 +770,9 @@ export const useChatStore = defineStore('chat', () => {
           id: msg.id || generateMessageId(),
           sender: msg.role === 'user' ? 'user' : 'assistant',
           content,
+          images: Array.isArray(msg.images)
+            ? msg.images.map((image) => ({ ...image, preview_url: '' }))
+            : [],
           timestamp: msg.created_at || new Date().toISOString(),
           toolEvents,
           sources: Array.isArray(msg.sources) ? msg.sources : [],
@@ -757,6 +788,18 @@ export const useChatStore = defineStore('chat', () => {
           feedbackState: null,
         }
       })
+      const historyImages = state.messages.flatMap((message) => message.images || [])
+      await Promise.all(
+        historyImages.map(async (image) => {
+          try {
+            const imageResponse = await getChatImage(image.image_id)
+            image.preview_url = URL.createObjectURL(imageResponse.data)
+          } catch (error) {
+            console.error('加载聊天图片失败:', error)
+            image.load_error = true
+          }
+        }),
+      )
       state.hasLoadedMessages = true
 
       return state.messages

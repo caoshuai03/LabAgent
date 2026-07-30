@@ -5,13 +5,14 @@
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.errors import BusinessException, ErrorCode
 from app.schemas.chat import (
     ChatMessageVO,
+    ChatImageVO,
     ChatRequest,
     ConversationTitleVO,
     DeleteSessionRequest,
@@ -22,6 +23,7 @@ from app.schemas.memory import ConversationCompressionVO
 from app.schemas.tool import AgentCancelRequest, AgentResumeRequest, ToolDefinitionVO, WorkspaceFileVO
 from app.core.response import BaseResponse, success
 from app.services.ai_service import AiService
+from app.services.chat_image_service import ChatImageService
 from app.services.message_service import MessageService
 from app.services.session_service import SessionService
 from app.tools.file_tools import preview_language_for
@@ -40,9 +42,10 @@ def _stream_response(
     session_id: str | None,
     user_id: int,
     model: str | None,
+    images: list[ChatImageVO],
 ) -> StreamingResponse:
     """构建 SSE 流式响应。"""
-    generator = _ai_service.stream_chat(message, session_id, user_id, model)
+    generator = _ai_service.stream_chat(message, session_id, user_id, model, images=images)
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
@@ -50,10 +53,41 @@ def _stream_response(
 async def agent_chat(req: ChatRequest, current_user: CurrentUser) -> StreamingResponse:
     """Agent 对话接口（RAG + ToolNode 工具循环）。"""
     return _stream_response(
-        req.message or "你好",
+        req.message,
         req.session_id,
         current_user.id,
         req.model,
+        req.images,
+    )
+
+
+@router.post("/images")
+async def upload_chat_image(
+    current_user: CurrentUser,
+    file: Annotated[UploadFile, File()],
+) -> BaseResponse[ChatImageVO]:
+    """上传单张聊天图片，按 JWT 用户隔离存储。"""
+    max_bytes = settings.chat_image_max_size_mb * 1024 * 1024
+    data = await file.read(max_bytes + 1)
+    image = await ChatImageService().upload(
+        current_user.id,
+        file.filename or "image",
+        data,
+        file.content_type,
+    )
+    return success(image)
+
+
+@router.get("/images/{image_id}", response_model=None)
+async def get_chat_image(image_id: str, current_user: CurrentUser) -> StreamingResponse:
+    """读取当前用户的聊天图片，供历史消息安全展示。"""
+    import io
+
+    data, content_type = await ChatImageService().get_by_id(current_user.id, image_id)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

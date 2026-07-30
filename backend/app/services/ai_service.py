@@ -19,6 +19,8 @@ from app.core.errors import BusinessException, ErrorCode
 from app.db.session import async_session_factory
 from app.graph.chat_graph import build_base_system_prompt, get_chat_graph
 from app.schemas.memory import ConversationCompressionVO
+from app.schemas.chat import ChatImageVO
+from app.services.chat_image_service import ChatImageService
 from app.services.conversation_compaction_service import conversation_compaction_service
 from app.services.conversation_title_queue import enqueue_conversation_title
 from app.services.message_service import MessageService
@@ -343,21 +345,41 @@ class AiService:
         model: str | None,
         rag_retrieval_mode: str | None = None,
         rag_retrieval_top_k: int | None = None,
+        images: list[ChatImageVO] | None = None,
     ) -> AsyncGenerator[str, None]:
         """开始新的 Agent 运行。"""
         trace_id = uuid.uuid4().hex
         is_new_session = not session_id
+        requested_images = images or []
         try:
+            normalized_images = await ChatImageService().validate_images(
+                user_id,
+                requested_images,
+            )
+            title_message = message.strip() or "[图片]"
             async with async_session_factory() as db:
                 try:
                     session_service = SessionService(db)
-                    chat_session = await session_service.get_or_create_session(session_id, user_id, message)
+                    chat_session = await session_service.get_or_create_session(
+                        session_id,
+                        user_id,
+                        title_message,
+                    )
                     sid = chat_session.id
-                    await MessageService(db).save_message(sid, user_id, "user", message)
+                    await MessageService(db).save_message(
+                        sid,
+                        user_id,
+                        "user",
+                        message,
+                        images=[image.model_dump(mode="json") for image in normalized_images],
+                    )
                     await db.commit()
                 except Exception:
                     await db.rollback()
                     raise
+        except BusinessException as exc:
+            yield _sse_event("error", session_id or "", trace_id, {"message": exc.message})
+            return
         except Exception:  # noqa: BLE001 - SSE 中返回受控错误
             logger.exception("Agent会话初始化失败: user_id=%s, session_id=%s", user_id, session_id)
             yield _sse_event("error", session_id or "", trace_id, {"message": "会话初始化失败，请稍后重试"})
@@ -367,6 +389,9 @@ class AiService:
         yield _sse_event("session", session_id_str, trace_id, {"session_id": session_id_str})
         graph_input = {
             "messages": [HumanMessage(content=message)],
+            "current_run_images": [
+                image.model_dump(mode="json") for image in normalized_images
+            ],
             "user_id": user_id,
             "session_id": session_id_str,
             "model_name": model,
@@ -385,7 +410,7 @@ class AiService:
             model=model,
             trace_id=trace_id,
             record_trace_id=trace_id,
-            title_source_message=message if is_new_session else None,
+            title_source_message=title_message if is_new_session else None,
         ):
             yield event
 

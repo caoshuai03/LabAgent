@@ -14,7 +14,30 @@
           :completed="message.isComplete"
         />
 
+        <div v-if="messageImages.length" class="message-images">
+          <button
+            v-for="image in messageImages"
+            :key="image.image_id || image.preview_url"
+            type="button"
+            class="message-image-link"
+            :disabled="!image.preview_url"
+            :aria-label="`在右侧预览 ${image.file_name || '聊天图片'}`"
+            @click="openImagePreview(image)"
+          >
+            <img
+              v-if="image.preview_url"
+              class="message-image"
+              :src="image.preview_url"
+              :alt="image.file_name || '聊天图片'"
+            />
+            <span v-else class="message-image-error">
+              {{ image.load_error ? '图片加载失败' : '图片加载中…' }}
+            </span>
+          </button>
+        </div>
+
         <div
+          v-if="message.content"
           ref="messageTextRef"
           class="message-text"
           v-html="formatContent(message.content)"
@@ -129,6 +152,20 @@ const messageTime = computed(() => {
 const sources = computed(() => {
   return Array.isArray(props.message.sources) ? props.message.sources : []
 })
+
+const messageImages = computed(() => {
+  return Array.isArray(props.message.images) ? props.message.images : []
+})
+
+const openImagePreview = (image) => {
+  if (!image?.preview_url) return
+  chatStore.openPreview({
+    path: `chat-image/${image.image_id || image.file_name}`,
+    preview_type: 'image',
+    image_url: image.preview_url,
+    download_name: image.file_name || '聊天图片',
+  })
+}
 
 const handleReasoningToggle = (reasoningId) => {
   chatStore.toggleMessageReasoning(props.message.id, reasoningId)
@@ -509,6 +546,70 @@ watch(
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.message-images {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+  margin-bottom: 8px;
+}
+
+.message-image-link {
+  display: flex;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color, rgba(229, 231, 235, 1));
+  border-radius: 10px;
+  background: #f7f7f8;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-in;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgba(144, 19, 139, 0.4);
+    box-shadow: 0 4px 14px rgba(17, 24, 39, 0.08);
+    transform: translateY(-1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color, #90138b);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.message-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.message-image-error {
+  padding: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .message-image-link {
+    width: 56px;
+    height: 56px;
+    flex-basis: 56px;
+  }
 }
 
 .message-text {

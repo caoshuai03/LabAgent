@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     # 文件上传校验
     upload_max_size_mb: int = 100
     upload_allowed_extensions: str = "pdf,md,markdown,txt"
+    chat_image_max_size_mb: int = 10
+    chat_image_max_count: int = 10
 
     # RAG 检索增强
     rag_collection_name: str = "lab_agent_rag"

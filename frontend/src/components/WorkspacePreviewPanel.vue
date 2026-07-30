@@ -16,7 +16,7 @@
           :title="tab.path"
           @click="chatStore.setPreviewActive(tab.path)"
         >
-          <span class="preview-tab-name">{{ fileNameOf(tab.path) }}</span>
+          <span class="preview-tab-name">{{ tabNameOf(tab) }}</span>
           <span
             class="preview-tab-close"
             role="button"
@@ -49,8 +49,8 @@
     </div>
 
     <div v-if="activeTab" class="preview-toolbar">
-      <span class="preview-path" :title="workspacePathOf(activeTab.path)">
-        {{ workspacePathOf(activeTab.path) }}
+      <span class="preview-path" :title="previewPathOf(activeTab)">
+        {{ previewPathOf(activeTab) }}
       </span>
       <button
         type="button"
@@ -82,6 +82,13 @@
         class="preview-body markdown-body"
         v-html="renderedMarkdownHtml(activeTab)"
       ></div>
+      <div v-else-if="isImageTab(activeTab)" class="preview-image-stage">
+        <img
+          class="preview-image"
+          :src="activeTab.image_url"
+          :alt="activeTab.download_name || fileNameOf(activeTab.path)"
+        />
+      </div>
       <pre v-else class="preview-code hljs"><code
         :class="codeLanguageClass(activeTab)"
         v-html="renderedCodeHtml(activeTab)"
@@ -108,6 +115,7 @@ const activeTab = computed(() => {
 })
 
 const fileNameOf = (path) => (path ? path.replace(/\\/g, '/').split('/').pop() || path : '')
+const tabNameOf = (tab) => tab?.download_name || fileNameOf(tab?.path)
 
 const workspacePathOf = (path) => {
   if (!path) return '工作台'
@@ -115,7 +123,12 @@ const workspacePathOf = (path) => {
   return `工作台 / ${normalized}`
 }
 
+const previewPathOf = (tab) => {
+  return isImageTab(tab) ? `聊天图片 / ${tabNameOf(tab)}` : workspacePathOf(tab?.path)
+}
+
 const isMarkdownTab = (tab) => (tab?.language || '').toLowerCase() === 'markdown'
+const isImageTab = (tab) => tab?.preview_type === 'image'
 
 const normalizedCodeLanguage = (tab) => {
   const language = (tab?.language || '').toLowerCase()
@@ -148,7 +161,7 @@ const renderedCodeHtml = (tab) => {
 
 // tab 首次激活且没有正文时（例如历史消息重放），按需拉取整文件内容
 const fetchPreviewIfNeeded = async (tab) => {
-  if (!tab || tab.content !== null || tab.loading) return
+  if (!tab || isImageTab(tab) || tab.content !== null || tab.loading) return
   const sessionId = chatStore.currentConversationId
   if (!sessionId) {
     tab.error = '缺少会话信息，无法预览'
@@ -173,6 +186,15 @@ const fetchPreviewIfNeeded = async (tab) => {
 }
 
 const handleDownload = async (tab) => {
+  if (isImageTab(tab) && tab.image_url) {
+    const link = document.createElement('a')
+    link.href = tab.image_url
+    link.download = tab.download_name || fileNameOf(tab.path) || 'image'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    return
+  }
   const sessionId = chatStore.currentConversationId
   if (!tab?.path || !sessionId) {
     toast.error('缺少会话或文件路径，无法下载')
@@ -361,6 +383,36 @@ watch(
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.preview-image-stage {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-height: 100%;
+  padding: 24px;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(45deg, rgba(0, 0, 0, 0.025) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(0, 0, 0, 0.025) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(0, 0, 0, 0.025) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(0, 0, 0, 0.025) 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 136px);
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 10px 32px rgba(17, 24, 39, 0.12);
 }
 
 .preview-body {

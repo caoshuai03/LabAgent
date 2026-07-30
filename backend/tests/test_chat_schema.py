@@ -5,7 +5,9 @@
 """
 from datetime import datetime
 
-from app.schemas.chat import ChatMessageVO
+import pytest
+
+from app.schemas.chat import ChatMessageVO, ChatRequest
 
 
 def test_chat_message_sources_allow_missing_score() -> None:
@@ -26,3 +28,38 @@ def test_chat_message_sources_allow_missing_score() -> None:
     )
 
     assert message.sources[0].score is None
+
+
+def test_chat_request_requires_text_or_image() -> None:
+    """聊天请求必须包含文本或图片。"""
+    with pytest.raises(ValueError):
+        ChatRequest(message="")
+
+
+def test_chat_request_accepts_image_only() -> None:
+    """允许只发送图片，由后端补充模型提示文本。"""
+    request = ChatRequest(
+        message="",
+        images=[
+            {
+                "image_id": "a" * 32,
+                "file_name": "实验图.png",
+                "content_type": "image/png",
+                "size": 100,
+            }
+        ],
+    )
+    assert request.message == ""
+
+
+def test_chat_request_allows_up_to_ten_images() -> None:
+    """单轮允许十张图片，第十一张由请求模型直接拒绝。"""
+    image = {
+        "image_id": "a" * 32,
+        "file_name": "实验图.png",
+        "content_type": "image/png",
+        "size": 100,
+    }
+    assert len(ChatRequest(message="", images=[image] * 10).images) == 10
+    with pytest.raises(ValueError):
+        ChatRequest(message="", images=[image] * 11)

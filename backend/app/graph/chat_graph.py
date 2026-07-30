@@ -10,7 +10,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -20,6 +27,8 @@ from langgraph.types import interrupt
 
 from app.core.config import settings
 from app.graph.checkpointer import get_checkpointer
+from app.schemas.chat import ChatImageVO
+from app.services.chat_image_service import ChatImageService
 from app.services.conversation_compaction_service import (
     conversation_compaction_service,
     conversation_summary_context,
@@ -70,6 +79,7 @@ class AgentState(MessagesState):
     conversation_summary: dict[str, Any] | None
     user_memory_context: str
     memory_context_run_id: str
+    current_run_images: list[dict[str, str | int]]
 
 
 def _tool_calls(state: AgentState) -> list[dict[str, Any]]:
@@ -241,8 +251,33 @@ def _build_graph() -> CompiledStateGraph:
         round_number = int(state.get("tool_round", 0))
         tools = _model_tools(state)
         bound_model = chat_model.bind_tools(tools) if tools else chat_model
+        model_messages = list(state["messages"])
+        current_images = [
+            ChatImageVO.model_validate(image)
+            for image in state.get("current_run_images", [])
+        ]
+        if current_images:
+            latest_human_index = next(
+                (
+                    index
+                    for index in range(len(model_messages) - 1, -1, -1)
+                    if isinstance(model_messages[index], HumanMessage)
+                ),
+                None,
+            )
+            if latest_human_index is not None:
+                human_message = model_messages[latest_human_index]
+                human_text = human_message.content if isinstance(human_message.content, str) else ""
+                multimodal_content, _ = await ChatImageService().build_human_content(
+                    state["user_id"],
+                    human_text,
+                    current_images,
+                )
+                model_messages[latest_human_index] = human_message.model_copy(
+                    update={"content": multimodal_content}
+                )
         response = await bound_model.ainvoke(
-            [SystemMessage(content=_system_prompt(state)), *state["messages"]],
+            [SystemMessage(content=_system_prompt(state)), *model_messages],
             config=config,
         )
         has_tool_calls = isinstance(response, AIMessage) and bool(response.tool_calls)
@@ -490,7 +525,7 @@ def _build_graph() -> CompiledStateGraph:
 
     async def finalize_node(state: AgentState) -> dict[str, Any]:
         """图内结束节点，业务消息由 AiService 持久化。"""
-        return {}
+        return {"current_run_images": []}
 
     builder = StateGraph(AgentState)
     builder.add_node("repair_interrupted_tools", repair_interrupted_tools_node)
