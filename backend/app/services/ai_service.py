@@ -287,6 +287,8 @@ class AiService:
             "tool_call_signatures": {},
             "rag_retrieval_mode": rag_retrieval_mode or "current",
             "rag_retrieval_top_k": rag_retrieval_top_k or settings.rag_rerank_top_n,
+            "activated_skills": [],
+            "active_skill_run_id": "",
         }
         async for event in self._stream_graph(
             graph_input,

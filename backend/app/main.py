@@ -1,8 +1,9 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-12
-@description: FastAPI 应用入口——注册路由、异常处理，管理 checkpointer 生命周期
+@description: FastAPI 应用入口——注册路由、异常处理，管理 checkpointer 与 Skills 生命周期
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,7 @@ from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.graph.checkpointer import close_checkpointer, init_checkpointer
+from app.services.skill_service import skill_catalog
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("labagent")
@@ -19,10 +21,21 @@ logger = logging.getLogger("labagent")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用启动/停止钩子：初始化与释放 LangGraph checkpointer。"""
+    """应用启动/停止钩子：初始化 Skills 与 LangGraph checkpointer。"""
+    try:
+        result = await asyncio.to_thread(skill_catalog.refresh)
+        logger.info(
+            "Skills: loaded=%d, skipped=%d",
+            result.loaded_count,
+            result.skipped_count,
+        )
+        for diagnostic in result.diagnostics:
+            logger.warning("Skill 已跳过: %s", diagnostic)
+    except Exception:
+        logger.exception("Skills 目录加载失败，Agent 将不绑定 Skill 工具")
     try:
         await init_checkpointer()
-        logger.info("checkpointer 初始化完成")
+        logger.info("checkpointer init done")
     except Exception:
         # 数据库不可用时记录但不阻断启动，便于本地排查
         logger.exception("checkpointer 初始化失败，对话接口将不可用")

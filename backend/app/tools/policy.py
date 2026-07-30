@@ -58,6 +58,10 @@ class ToolPolicy:
         if tool_name == "search_knowledge_base":
             # 只读知识库检索，无路径/命令参数，低风险直接放行
             return ToolPolicyDecision(True, False, "low")
+        if tool_name in {"activate_skill", "read_skill_resource"}:
+            if not settings.skills_enabled:
+                return ToolPolicyDecision(False, False, "low", "Skills 未启用")
+            return ToolPolicyDecision(True, False, "low")
         if tool_name in _FILE_PATH_FIELDS:
             return self._evaluate_file(tool_name, arguments, workspace)
         if tool_name == "execute_shell":

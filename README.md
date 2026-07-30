@@ -11,7 +11,7 @@ LabAgent 是一个面向教学实验的 Agentic RAG 平台，围绕课程知识�
 
 - **Agentic RAG 与三级检索**：由 Agent 自主检索课程知识库，结合多级召回、重排和来源引用生成可信回答。
 - **RAGAS 评测闭环**：内置 RAG 评测流程，支持用指标结果持续观察召回、回答相关性和忠实度。
-- **Skills 扩展**：通过 Markdown Skills 扩展 Agent 的任务处理能力。
+- **Skills 扩展**：按 Agent Skills 规范加载本地 Markdown Skills，支持渐进披露、运行内激活和安全读取参考资源。
 - **多模型接入**：支持 Ollama 本地模型、OpenAI 兼容接口和自定义模型配置。
 - **沙箱隔离与工具安全**：支持受控文件工具和 Shell 工具，高风险操作需用户确认。
 - **完整应用体验**：包含用户认证、会话管理、流式输出、知识库管理和响应式 Web 界面。
@@ -76,3 +76,4 @@ npm run dev
 - [产品与架构设计](docs/01-产品与架构设计.md)
 - [RAG 全流程](docs/04-RAG全流程实现与理解.md)
 - [Agent 工具调用](docs/07-Agent工具调用流程与实现理解.md)
+- [Skills 调研与实现设计](docs/14-Skills调研与实现设计.md)

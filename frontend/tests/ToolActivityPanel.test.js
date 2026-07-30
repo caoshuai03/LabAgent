@@ -7,6 +7,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import ToolActivityPanel from '../src/components/ToolActivityPanel.vue'
+import ToolActivityIcon from '../src/components/icons/ToolActivityIcon.vue'
 
 const shellEvents = [
   {
@@ -30,6 +31,20 @@ const shellEvents = [
 ]
 
 describe('ToolActivityPanel', () => {
+  it.each([
+    ['skill:lab-report-writer', '.tool-icon-sparkles'],
+    ['read_skill_resource', '.tool-icon-book-open'],
+    ['search_knowledge_base', '.tool-icon-database-search'],
+    ['write_file', '.tool-icon-file-pen'],
+    ['execute_shell', '.tool-icon-terminal'],
+    ['global_timeout', '.tool-icon-clock-alert'],
+    ['unknown_tool', '.tool-icon-wrench'],
+  ])('%s 使用对应的工具活动图标', (toolName, iconSelector) => {
+    const wrapper = mount(ToolActivityIcon, { props: { toolName } })
+
+    expect(wrapper.find(iconSelector).exists()).toBe(true)
+  })
+
   it('展示命令活动标题和实际命令', () => {
     const wrapper = mount(ToolActivityPanel, { props: { toolEvents: shellEvents } })
 
@@ -165,5 +180,99 @@ describe('ToolActivityPanel', () => {
     expect(wrapper.text()).toContain('运行了多个命令')
     expect(wrapper.text()).not.toContain('原因：')
     expect(wrapper.find('.activity-group-header').attributes('aria-expanded')).toBe('false')
+  })
+
+  it('Skill 激活置顶、使用专属图标并隐藏成功的资源读取', () => {
+    const wrapper = mount(ToolActivityPanel, {
+      props: {
+        toolEvents: [
+          {
+            eventType: 'tool_call',
+            payload: {
+              tool_call_id: 'call-search',
+              tool_name: 'search_knowledge_base',
+              arguments: { query: '快速排序实验' },
+            },
+          },
+          {
+            eventType: 'tool_result',
+            payload: {
+              tool_call_id: 'call-search',
+              tool_name: 'search_knowledge_base',
+              success: false,
+              status: 'failed',
+              result_summary: '知识库检索失败，已降级',
+            },
+          },
+          {
+            eventType: 'tool_call',
+            payload: {
+              tool_call_id: 'call-activate-skill',
+              tool_name: 'activate_skill',
+              arguments: { name: 'lab-report-writer' },
+            },
+          },
+          {
+            eventType: 'status',
+            payload: {
+              tool_call_id: 'call-activate-skill',
+              tool_name: 'activate_skill',
+              stage: 'tool_running',
+            },
+          },
+          {
+            eventType: 'tool_result',
+            payload: {
+              tool_call_id: 'call-activate-skill',
+              tool_name: 'activate_skill',
+              success: true,
+              status: 'success',
+              result_summary: 'Skill lab-report-writer 已激活',
+            },
+          },
+          {
+            eventType: 'skill_loaded',
+            payload: {
+              tool_call_id: 'call-activate-skill',
+              skills: [{ name: 'lab-report-writer', description: '实验报告写作' }],
+            },
+          },
+          {
+            eventType: 'tool_call',
+            payload: {
+              tool_call_id: 'call-read-skill-resource',
+              tool_name: 'read_skill_resource',
+              arguments: {
+                name: 'lab-report-writer',
+                resource_path: 'references/report-checklist.md',
+              },
+            },
+          },
+          {
+            eventType: 'tool_result',
+            payload: {
+              tool_call_id: 'call-read-skill-resource',
+              tool_name: 'read_skill_resource',
+              success: true,
+              status: 'success',
+              result_summary: '已读取 Skill 资源 references/report-checklist.md',
+            },
+          },
+        ],
+      },
+    })
+
+    const activityItems = wrapper.findAll('.activity-item')
+    expect(activityItems).toHaveLength(2)
+    expect(activityItems[0].text()).toContain('加载 Skill')
+    expect(activityItems[0].text()).toContain('lab-report-writer')
+    expect(activityItems[0].find('.skill-activity-icon').exists()).toBe(true)
+    expect(activityItems[1].text()).toContain('知识库检索失败，已降级')
+    expect(wrapper.find('.activity-group-title').text()).toBe('执行了工具操作')
+    expect(wrapper.find('.activity-group-title').text()).not.toContain('失败')
+    expect(wrapper.text()).toContain('加载 Skill')
+    expect(wrapper.text()).toContain('lab-report-writer')
+    expect(wrapper.text()).not.toContain('已完成')
+    expect(wrapper.text()).not.toContain('report-checklist.md')
   })
 })

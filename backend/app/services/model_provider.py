@@ -31,7 +31,7 @@ _AZURE_MODELS = {
 }
 
 # 外部调用超时（秒），避免阻塞
-_REQUEST_TIMEOUT = 60
+_REQUEST_TIMEOUT = 50
 
 
 class ModelProvider:

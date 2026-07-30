@@ -1,0 +1,7 @@
+# @author: caoshuai.cs
+# @date: 2026-07-30
+# @description: Java 调试助手在 Skill 选择界面中的展示元数据
+interface:
+  display_name: "Java 调试助手"
+  short_description: "系统定位 Java 编译错误、运行时异常、异常堆栈与空指针问题"
+  default_prompt: "使用 $java-debug-helper 分析这段 Java 异常堆栈并给出修复建议。"

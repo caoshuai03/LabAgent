@@ -68,31 +68,7 @@
             @click="toggleActivity(activity)"
           >
             <span class="activity-item-icon" aria-hidden="true">
-              <svg
-                v-if="isShell(activity)"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="4" width="18" height="16" rx="3"></rect>
-                <path d="m7 9 3 3-3 3"></path>
-                <path d="M13 15h4"></path>
-              </svg>
-              <svg
-                v-else
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path>
-                <path d="M14 2v6h6"></path>
-              </svg>
+              <ToolActivityIcon :tool-name="activity.toolName" />
             </span>
             <span class="activity-status-label">{{ getStatusLabel(activity) }}</span>
             <span class="activity-primary-text" :title="getPrimaryText(activity)">
@@ -127,6 +103,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import ToolActivityIcon from './icons/ToolActivityIcon.vue'
 
 const props = defineProps({
   toolEvents: {
@@ -140,6 +117,8 @@ const props = defineProps({
 })
 
 const READ_TOOL_NAMES = new Set(['list_directory', 'read_file', 'file_search'])
+const SKILL_ACTIVATION_TOOL_NAME = 'activate_skill'
+const SKILL_RESOURCE_TOOL_NAME = 'read_skill_resource'
 const groupExpanded = ref(!props.completed)
 const expandedToolCallIds = ref(new Set())
 
@@ -190,11 +169,30 @@ const ensureActivity = (list, activeCalls, payload, index) => {
 const activities = computed(() => {
   const list = []
   const activeCalls = new Map()
+  const toolCallsById = new Map(
+    props.toolEvents
+      .filter((event) => event?.eventType === 'tool_call' && event?.payload?.tool_call_id)
+      .map((event) => [event.payload.tool_call_id, event.payload]),
+  )
 
   props.toolEvents.forEach((event, index) => {
     const payload = event?.payload || {}
+    const originalCall = toolCallsById.get(payload.tool_call_id) || {}
+    const toolName = payload.tool_name || originalCall.tool_name
 
     if (event?.eventType === 'tool_call') {
+      if (toolName === SKILL_RESOURCE_TOOL_NAME) return
+      if (toolName === SKILL_ACTIVATION_TOOL_NAME) {
+        const skillName = payload.arguments?.name || 'skill'
+        const activity = ensureActivity(
+          list,
+          activeCalls,
+          { ...payload, tool_name: `skill:${skillName}` },
+          index,
+        )
+        activity.status = 'running'
+        return
+      }
       const activity = ensureActivity(list, activeCalls, payload, index)
       activity.arguments = payload.arguments || {}
       activity.description = payload.description || ''
@@ -202,8 +200,21 @@ const activities = computed(() => {
     }
 
     if (event?.eventType === 'tool_result') {
-      const activity = ensureActivity(list, activeCalls, payload, index)
-      activity.status = payload.status || (payload.success === false ? 'failed' : 'success')
+      const status = payload.status || (payload.success === false ? 'failed' : 'success')
+      if (toolName === SKILL_RESOURCE_TOOL_NAME && status === 'success') return
+      const skillName = originalCall.arguments?.name || 'skill'
+      const activity = ensureActivity(
+        list,
+        activeCalls,
+        {
+          ...payload,
+          arguments: originalCall.arguments || {},
+          tool_name:
+            toolName === SKILL_ACTIVATION_TOOL_NAME ? `skill:${skillName}` : toolName,
+        },
+        index,
+      )
+      activity.status = status
       activity.resultSummary = payload.result_summary || ''
       activity.outputPreview = payload.output_preview || ''
       activity.errorMessage = payload.error_message || ''
@@ -226,8 +237,21 @@ const activities = computed(() => {
         })
         return
       }
-      const activity = ensureActivity(list, activeCalls, payload, index)
-      activity.status = statusFromStage(payload.stage, payload.success) || activity.status
+      const status = statusFromStage(payload.stage, payload.success)
+      if (toolName === SKILL_RESOURCE_TOOL_NAME && !['failed', 'timeout'].includes(status)) return
+      const skillName = originalCall.arguments?.name || 'skill'
+      const activity = ensureActivity(
+        list,
+        activeCalls,
+        {
+          ...payload,
+          arguments: originalCall.arguments || {},
+          tool_name:
+            toolName === SKILL_ACTIVATION_TOOL_NAME ? `skill:${skillName}` : toolName,
+        },
+        index,
+      )
+      activity.status = status || activity.status
       if (payload.message) activity.errorMessage = payload.message
       if (payload.duration_ms !== undefined) activity.durationMs = payload.duration_ms
       return
@@ -235,25 +259,31 @@ const activities = computed(() => {
 
     if (event?.eventType === 'skill_loaded') {
       ;(payload.skills || []).forEach((skill, skillIndex) => {
-        list.push({
-          id: `skill-${index}-${skillIndex}`,
-          toolName: `skill:${skill.name || 'skill'}`,
-          arguments: {},
-          status: 'success',
-          resultSummary: skill.description || '',
-          outputPreview: '',
-          errorMessage: '',
-          durationMs: null,
-        })
+        const activity = ensureActivity(
+          list,
+          activeCalls,
+          {
+            tool_call_id: payload.tool_call_id || `skill-${index}-${skillIndex}`,
+            tool_name: `skill:${skill.name || 'skill'}`,
+          },
+          index,
+        )
+        activity.toolName = `skill:${skill.name || 'skill'}`
+        activity.status = 'success'
+        activity.resultSummary = skill.description || ''
       })
     }
   })
 
-  return list
+  return [
+    ...list.filter((activity) => activity.toolName.startsWith('skill:')),
+    ...list.filter((activity) => !activity.toolName.startsWith('skill:')),
+  ]
 })
 
 const isShell = (activity) => activity.toolName === 'execute_shell'
 const isReadActivity = (activity) => READ_TOOL_NAMES.has(activity.toolName)
+const isSkillActivity = (activity) => activity.toolName.startsWith('skill:')
 
 const filePathOf = (activity) => activity.previewPath || activity.arguments?.file_path || ''
 
@@ -273,6 +303,9 @@ const hasShellActivities = computed(() => activities.value.some(isShell))
 const groupTitle = computed(() => {
   const shellActivities = activities.value.filter(isShell)
   const readActivities = activities.value.filter(isReadActivity)
+  const skillActivities = activities.value.filter(isSkillActivity)
+  const onlySkillActivities =
+    skillActivities.length > 0 && skillActivities.length === activities.value.length
   const allStatuses = activities.value.map((activity) => activity.status)
   const hasSuccessfulActivity = allStatuses.includes('success')
   const hasUnexecutedActivity = allStatuses.some((status) =>
@@ -287,6 +320,7 @@ const groupTitle = computed(() => {
     return '等待确认命令'
   }
   if (allStatuses.includes('running') || allStatuses.includes('pending')) {
+    if (onlySkillActivities) return '正在加载 Skill'
     if (shellActivities.length && readActivities.length) return '正在处理文件和命令'
     if (shellActivities.length) return '正在运行命令'
     if (readActivities.length) return '正在查看文件'
@@ -294,12 +328,6 @@ const groupTitle = computed(() => {
   }
   if (allStatuses.includes('timeout')) {
     return shellActivities.length ? '命令执行超时' : '工具执行超时'
-  }
-  if (allStatuses.includes('failed')) {
-    if (hasSuccessfulActivity) return '部分工具执行失败'
-    if (shellActivities.length) return '命令执行失败'
-    if (readActivities.length) return '文件查看失败'
-    return '工具执行失败'
   }
   if (hasUnexecutedActivity) {
     if (hasSuccessfulActivity) return '运行了多个命令'
@@ -316,6 +344,7 @@ const groupTitle = computed(() => {
   if (shellActivities.length && readActivities.length) return `查看了文件，${shellTitle}`
   if (shellActivities.length) return shellTitle
   if (readActivities.length) return '查看了文件'
+  if (onlySkillActivities) return '加载了 Skill'
   return '执行了工具操作'
 })
 
@@ -334,6 +363,14 @@ const statusLabel = (status, labels) => {
 }
 
 const getStatusLabel = (activity) => {
+  if (isSkillActivity(activity)) {
+    return statusLabel(activity.status, {
+      pending: '加载 Skill',
+      running: '加载 Skill',
+      success: '加载 Skill',
+      failed: '加载失败',
+    })
+  }
   if (isShell(activity)) {
     return statusLabel(activity.status, {
       pending: '等待执行',
@@ -524,7 +561,6 @@ const getShellDetail = (activity) => {
     opacity: 1;
   }
 
-  &.status-failed,
   &.status-timeout {
     color: #c2410c;
   }

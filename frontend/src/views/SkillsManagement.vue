@@ -53,14 +53,22 @@
               <button class="close-btn" @click="detailDialogVisible = false">✕</button>
             </div>
             <div v-if="currentSkill" class="skill-detail">
+              <div v-if="detailLoading" class="detail-loading">详情加载中...</div>
               <div class="detail-section">
                 <h4>技能简介</h4>
                 <p class="description">{{ currentSkill.description }}</p>
               </div>
 
-              <div v-if="skillDetail?.content" class="detail-section">
+              <div v-if="!detailLoading && skillDetail?.content" class="detail-section">
                 <h4>详细说明</h4>
                 <div class="markdown-content" v-html="renderedContent"></div>
+              </div>
+
+              <div v-if="!detailLoading && skillDetail?.resources?.length" class="detail-section">
+                <h4>按需资源</h4>
+                <ul class="resource-list">
+                  <li v-for="resource in skillDetail.resources" :key="resource">{{ resource }}</li>
+                </ul>
               </div>
             </div>
           </div>
@@ -72,75 +80,21 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getSkills } from '../api/skills'
+import { getSkillDetail, getSkills } from '../api/skills'
 import Sidebar from '../components/Sidebar.vue'
 import { useChatStore } from '../stores/chat'
-import { escapeHtml } from '../utils/html'
+import { renderMarkdown } from '../utils/markdown'
 import { useToast } from '../composables/useToast'
 
 const chatStore = useChatStore()
 const toast = useToast()
-
-// 简单的 Markdown 渲染函数（不依赖外部库）
-// 这里会尽量把段落、列表和标题分开渲染，避免完整描述里出现过多空白
-const renderMarkdown = (content) => {
-  if (!content) return ''
-
-  const normalized = content
-    .replace(/\r\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  const formatInline = (text) => {
-    return escapeHtml(text)
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/`(.+?)`/g, '<code>$1</code>')
-  }
-
-  const blocks = normalized.split(/\n\n+/)
-
-  return blocks
-    .map((block) => {
-      const lines = block
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-      if (lines.length === 0) return ''
-
-      const firstLine = lines[0]
-
-      if (/^#{1,3}\s+/.test(firstLine)) {
-        const level = firstLine.match(/^#{1,3}/)?.[0].length || 1
-        const title = firstLine.replace(/^#{1,3}\s+/, '')
-        return `<h${level}>${formatInline(title)}</h${level}>`
-      }
-
-      if (lines.every((line) => /^[-*+]\s+/.test(line))) {
-        const items = lines
-          .map((line) => `<li>${formatInline(line.replace(/^[-*+]\s+/, ''))}</li>`)
-          .join('')
-        return `<ul>${items}</ul>`
-      }
-
-      if (lines.every((line) => /^\d+\.\s+/.test(line))) {
-        const items = lines
-          .map((line) => `<li>${formatInline(line.replace(/^\d+\.\s+/, ''))}</li>`)
-          .join('')
-        return `<ol>${items}</ol>`
-      }
-
-      return `<p>${formatInline(lines.join(' '))}</p>`
-    })
-    .filter(Boolean)
-    .join('')
-}
 
 const skills = ref([])
 const loading = ref(false)
 const detailDialogVisible = ref(false)
 const currentSkill = ref(null)
 const skillDetail = ref(null)
+const detailLoading = ref(false)
 
 const renderedContent = computed(() => {
   if (!skillDetail.value?.content) return ''
@@ -160,11 +114,20 @@ const loadSkills = async () => {
   }
 }
 
-const showSkillDetail = (skill) => {
+const showSkillDetail = async (skill) => {
   currentSkill.value = skill
   detailDialogVisible.value = true
-  // 详情内容直接取自列表返回的 skill 数据，后端暂不提供单独的详情接口
-  skillDetail.value = skill
+  skillDetail.value = null
+  detailLoading.value = true
+  try {
+    const response = await getSkillDetail(skill.name)
+    skillDetail.value = response.data.data
+  } catch (error) {
+    console.error('加载 Skill 详情失败:', error)
+    toast.error('加载 Skill 详情失败')
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -343,6 +306,21 @@ onMounted(() => {
   overflow-y: auto;
 }
 
+.detail-loading {
+  padding: 12px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.resource-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
 .detail-section {
   margin-bottom: 20px;
   padding: 6px 0 0;
@@ -384,22 +362,33 @@ onMounted(() => {
 }
 
 .markdown-content {
-  padding: 14px 0 0;
-  background: linear-gradient(180deg, rgba(144, 19, 139, 0.02), rgba(0, 0, 0, 0.01));
-  border: none;
-  border-radius: 0;
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--text-primary);
+  color: #1f2328;
+  font-size: 15px;
+  line-height: 1.75;
   word-break: break-word;
+  overflow-wrap: anywhere;
+
+  :deep(> *:first-child) {
+    margin-top: 0;
+  }
+
+  :deep(> *:last-child) {
+    margin-bottom: 0;
+  }
 
   :deep(h1),
   :deep(h2),
-  :deep(h3) {
-    color: var(--text-primary);
-    margin: 0 0 10px 0;
+  :deep(h3),
+  :deep(h4),
+  :deep(h5),
+  :deep(h6) {
+    margin: 0.8em 0 0.4em 0;
+    color: #202124;
     font-weight: 600;
-    line-height: 1.35;
+
+    &:first-child {
+      margin-top: 0;
+    }
   }
 
   :deep(h1) {
@@ -407,50 +396,152 @@ onMounted(() => {
   }
 
   :deep(h2) {
-    font-size: 18px;
+    font-size: 17px;
   }
 
   :deep(h3) {
     font-size: 16px;
   }
 
-  :deep(p) {
-    margin: 0 0 12px 0;
-    color: var(--text-secondary);
+  :deep(h4),
+  :deep(h5),
+  :deep(h6) {
+    font-size: 15px;
   }
 
-  :deep(p:last-child) {
-    margin-bottom: 0;
+  :deep(p) {
+    margin: 0.8em 0;
   }
 
   :deep(ul),
   :deep(ol) {
-    margin: 0 0 12px 0;
-    padding-left: 20px;
-    color: var(--text-secondary);
+    margin: 0.8em 0;
+    padding-left: 1.45em;
   }
 
   :deep(li) {
-    margin: 6px 0;
-    line-height: 1.7;
+    margin: 0.28em 0;
+    padding-left: 0.15em;
   }
 
-  :deep(strong) {
-    font-weight: 600;
-    color: var(--text-primary);
+  :deep(blockquote) {
+    margin: 1.1em 0;
+    padding: 0.15em 0 0.15em 1em;
+    border-left: 4px solid #e3e5e7;
+    color: #6b7280;
   }
 
-  :deep(em) {
-    font-style: italic;
+  :deep(code:not(pre code)) {
+    padding: 0.12em 0.42em;
+    border-radius: 5px;
+    background: #f1f3f5;
+    color: #343a40;
+    font-family:
+      'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Monaco, 'Courier New', monospace;
+    font-size: 0.88em;
   }
 
-  :deep(code) {
-    background-color: rgba(144, 19, 139, 0.08);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: 'SFMono-Regular', 'Consolas', monospace;
-    font-size: 12px;
+  :deep(a) {
     color: #90138b;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s ease;
+
+    &:hover {
+      border-bottom-color: #90138b;
+    }
+  }
+
+  :deep(hr) {
+    margin: 1.6em 0;
+    border: 0;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  :deep(.markdown-table-wrapper) {
+    width: 100%;
+    margin: 1.1em 0;
+    overflow-x: auto;
+    border: 1px solid #e3e5e8;
+    border-radius: 10px;
+  }
+
+  :deep(table) {
+    width: 100%;
+    min-width: 520px;
+    margin: 0;
+    border-spacing: 0;
+    border-collapse: separate;
+    font-size: 13px;
+  }
+
+  :deep(th),
+  :deep(td) {
+    padding: 9px 11px;
+    border: 0;
+    border-bottom: 1px solid #e3e5e8;
+    text-align: left;
+    vertical-align: top;
+
+    & + th,
+    & + td {
+      border-left: 1px solid #e3e5e8;
+    }
+  }
+
+  :deep(th) {
+    background: rgba(0, 0, 0, 0.025);
+    font-weight: 600;
+  }
+
+  :deep(tbody tr:last-child td) {
+    border-bottom: 0;
+  }
+
+  :deep(.code-block-wrapper) {
+    position: relative;
+    margin: 1.1em 0;
+    border: 1px solid #eff1f3;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--app-page-bg, #fafafc);
+  }
+
+  :deep(.code-block-header) {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 1;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  :deep(.code-block-lang) {
+    color: #8a8f98;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  :deep(.code-block-wrapper pre) {
+    margin: 0;
+    padding: 24px 18px 18px;
+    overflow-x: auto;
+    background: transparent;
+    color: #24292f;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  :deep(pre) {
+    max-width: 100%;
+  }
+
+  :deep(pre code) {
+    font-family:
+      'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Monaco, 'Courier New', monospace;
   }
 }
 

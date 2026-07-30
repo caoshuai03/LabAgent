@@ -21,6 +21,7 @@ RUN uv venv && uv export --no-dev --no-emit-project --no-hashes --format require
 
 # 拷贝源码
 COPY app ./app
+COPY skills ./skills
 COPY tool_runner ./tool_runner
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini

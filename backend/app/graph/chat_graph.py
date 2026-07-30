@@ -21,9 +21,10 @@ from langgraph.types import interrupt
 from app.core.config import settings
 from app.graph.checkpointer import get_checkpointer
 from app.services.model_provider import model_provider
+from app.services.skill_service import SkillError, skill_catalog, skill_service
 from app.tools.policy import tool_policy
 from app.tools.registry import tool_registry
-from app.tools.result import redact_value, result_envelope
+from app.tools.result import parse_result_envelope, redact_value, result_envelope
 from app.tools.workspace import workspace_manager
 
 logger = logging.getLogger("labagent")
@@ -57,6 +58,8 @@ class AgentState(MessagesState):
     tool_call_signatures: dict[str, int]
     tool_allowed_call_ids: list[str]
     tool_rejections: dict[str, dict[str, Any]]
+    activated_skills: list[dict[str, str]]
+    active_skill_run_id: str
 
 
 def _tool_calls(state: AgentState) -> list[dict[str, Any]]:
@@ -78,17 +81,37 @@ def _call_signature(tool_name: str, arguments: Any) -> str:
     return f"{tool_name}:{args_text}"
 
 
+def _system_prompt(state: AgentState) -> str:
+    """按渐进披露规则拼装 Skill 目录与当前已激活正文。"""
+    parts = [_SYSTEM_PROMPT]
+    catalog = skill_catalog.catalog_prompt()
+    if catalog:
+        parts.append(catalog)
+    active = skill_service.active_prompt(list(state.get("activated_skills") or []))
+    if active:
+        parts.append(active)
+    return "\n\n".join(parts)
+
+
 def _build_graph() -> CompiledStateGraph:
     """构建 Agent + ToolNode 图（检索作为工具由模型自主调用）。"""
 
     async def prepare_context_node(state: AgentState) -> dict[str, Any]:
         """创建并注入当前会话工作区。"""
         workspace = workspace_manager.ensure_workspace(state["user_id"], state["session_id"])
+        run_id = state["agent_run_id"]
+        activations = (
+            list(state.get("activated_skills") or [])
+            if state.get("active_skill_run_id") == run_id
+            else []
+        )
         return {
             "workspace_path": str(workspace),
             "tool_authorized": False,
             "tool_allowed_call_ids": [],
             "tool_rejections": {},
+            "activated_skills": activations,
+            "active_skill_run_id": run_id,
         }
 
     async def agent_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
@@ -110,7 +133,7 @@ def _build_graph() -> CompiledStateGraph:
             tools = []
         bound_model = chat_model.bind_tools(tools) if tools else chat_model
         prompt = ChatPromptTemplate.from_messages(
-            [("system", _SYSTEM_PROMPT), MessagesPlaceholder("messages")]
+            [("system", _system_prompt(state)), MessagesPlaceholder("messages")]
         )
         response = await (prompt | bound_model).ainvoke(
             {"messages": trimmed},
@@ -287,6 +310,52 @@ def _build_graph() -> CompiledStateGraph:
                     if isinstance(message, ToolMessage):
                         messages_by_call_id[str(message.tool_call_id)] = message
 
+        activations = list(state.get("activated_skills") or [])
+        calls_by_id = {str(call.get("id", "")): call for call in calls}
+        writer = get_stream_writer()
+        for call_id, message in list(messages_by_call_id.items()):
+            call = calls_by_id.get(call_id, {})
+            if call.get("name") != "activate_skill":
+                continue
+            result = parse_result_envelope(message.content)
+            if not result.get("success"):
+                continue
+            arguments = call.get("args") if isinstance(call.get("args"), dict) else {}
+            name = str(arguments.get("name") or "")
+            try:
+                activations, definition, already_active = skill_service.activate(name, activations)
+            except SkillError as exc:
+                messages_by_call_id[call_id] = ToolMessage(
+                    content=result_envelope(
+                        success=False,
+                        summary="Skill 激活失败",
+                        error=str(exc),
+                        error_type="invalid_argument",
+                    ),
+                    tool_call_id=call_id,
+                    name="activate_skill",
+                )
+                continue
+            writer(
+                {
+                    "tool_event": {
+                        "event_type": "skill_loaded",
+                        "payload": {
+                            "tool_call_id": call_id,
+                            "skills": [
+                                {
+                                    "name": definition.name,
+                                    "description": definition.description,
+                                }
+                            ],
+                            "count": 1,
+                            "already_active": already_active,
+                            "round": int(state.get("tool_round", 1)),
+                        },
+                    }
+                }
+            )
+
         for call in calls:
             call_id = str(call.get("id", ""))
             rejection = rejections.get(call_id)
@@ -311,7 +380,7 @@ def _build_graph() -> CompiledStateGraph:
             for call in calls
             if (call_id := str(call.get("id", ""))) in messages_by_call_id
         ]
-        return {"messages": ordered_messages}
+        return {"messages": ordered_messages, "activated_skills": activations}
 
     async def finalize_node(state: AgentState) -> dict[str, Any]:
         """图内结束节点，业务消息由 AiService 持久化。"""

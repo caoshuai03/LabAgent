@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     tool_runner_base_url: str = "http://tool-runner:8990"
     tool_runner_token: str = ""
 
+    # Markdown Skills
+    skills_enabled: bool = True
+    skills_directory: str = "./skills"
+    skills_max_count: int = 50
+    skills_max_activations_per_run: int = 3
+    skills_max_skill_file_bytes: int = 262_144
+    skills_max_resource_file_bytes: int = 262_144
+    skills_resource_max_depth: int = 3
+    skills_max_active_chars: int = 32_000
+
     @property
     def database_url(self) -> str:
         """异步数据库连接串。"""
