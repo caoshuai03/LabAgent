@@ -27,7 +27,7 @@
               <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
             </svg>
           </div>
-          <h3>暂无 Skills</h3>
+          <h3>暂无技能</h3>
         </div>
 
         <!-- Skills列表 -->
@@ -107,8 +107,8 @@ const loadSkills = async () => {
     const response = await getSkills()
     skills.value = response.data.data || []
   } catch (error) {
-    console.error('加载 Skills 失败:', error)
-    toast.error('加载 Skills 失败')
+    console.error('加载技能失败:', error)
+    toast.error('加载技能失败')
   } finally {
     loading.value = false
   }
@@ -123,8 +123,8 @@ const showSkillDetail = async (skill) => {
     const response = await getSkillDetail(skill.name)
     skillDetail.value = response.data.data
   } catch (error) {
-    console.error('加载 Skill 详情失败:', error)
-    toast.error('加载 Skill 详情失败')
+    console.error('加载技能详情失败:', error)
+    toast.error('加载技能详情失败')
   } finally {
     detailLoading.value = false
   }

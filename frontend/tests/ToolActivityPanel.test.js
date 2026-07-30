@@ -51,6 +51,7 @@ describe('ToolActivityPanel', () => {
     expect(wrapper.text()).toContain('运行了命令')
     expect(wrapper.text()).toContain('已运行')
     expect(wrapper.text()).toContain('ls -la')
+    expect(wrapper.find('.activity-group-header .tool-icon-wrench').exists()).toBe(true)
   })
 
   it('点击Shell行后展开执行输出', async () => {
@@ -182,7 +183,7 @@ describe('ToolActivityPanel', () => {
     expect(wrapper.find('.activity-group-header').attributes('aria-expanded')).toBe('false')
   })
 
-  it('Skill 激活置顶、使用专属图标并隐藏成功的资源读取', () => {
+  it('技能激活置顶、使用专属图标并隐藏成功的资源读取', () => {
     const wrapper = mount(ToolActivityPanel, {
       props: {
         toolEvents: [
@@ -264,13 +265,13 @@ describe('ToolActivityPanel', () => {
 
     const activityItems = wrapper.findAll('.activity-item')
     expect(activityItems).toHaveLength(2)
-    expect(activityItems[0].text()).toContain('加载 Skill')
+    expect(activityItems[0].text()).toContain('加载技能')
     expect(activityItems[0].text()).toContain('lab-report-writer')
     expect(activityItems[0].find('.skill-activity-icon').exists()).toBe(true)
     expect(activityItems[1].text()).toContain('知识库检索失败，已降级')
     expect(wrapper.find('.activity-group-title').text()).toBe('执行了工具操作')
     expect(wrapper.find('.activity-group-title').text()).not.toContain('失败')
-    expect(wrapper.text()).toContain('加载 Skill')
+    expect(wrapper.text()).toContain('加载技能')
     expect(wrapper.text()).toContain('lab-report-writer')
     expect(wrapper.text()).not.toContain('已完成')
     expect(wrapper.text()).not.toContain('report-checklist.md')

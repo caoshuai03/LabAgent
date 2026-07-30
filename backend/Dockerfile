@@ -8,7 +8,8 @@ ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=${PYPI_INDEX_URL} \
-    UV_DEFAULT_INDEX=${PYPI_INDEX_URL}
+    UV_DEFAULT_INDEX=${PYPI_INDEX_URL} \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 WORKDIR /app
 
@@ -18,6 +19,8 @@ RUN pip install --no-cache-dir uv
 # 先拷贝依赖清单以利用缓存
 COPY pyproject.toml uv.lock ./
 RUN uv venv && uv export --no-dev --no-emit-project --no-hashes --format requirements-txt | uv pip install -r -
+RUN mkdir -p "${TIKTOKEN_CACHE_DIR}" \
+    && .venv/bin/python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 # 拷贝源码
 COPY app ./app

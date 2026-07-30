@@ -9,10 +9,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.graph.checkpointer import close_checkpointer, init_checkpointer
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
-from app.graph.checkpointer import close_checkpointer, init_checkpointer
+from app.services.memory_extraction_service import memory_extraction_scheduler
 from app.services.skill_service import skill_catalog
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
         # 数据库不可用时记录但不阻断启动，便于本地排查
         logger.exception("checkpointer 初始化失败，对话接口将不可用")
     yield
+    await memory_extraction_scheduler.close()
     await close_checkpointer()
 
 

@@ -45,7 +45,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useChatStore } from '../stores/chat'
 import MessageItem from './MessageItem.vue'
 
@@ -70,6 +70,9 @@ const flashScrollbar = () => {
 }
 
 const BOTTOM_THRESHOLD = 100
+const conversationScrollPositions = new Map()
+let contentMutationObserver = null
+let containerResizeObserver = null
 
 // 检查当前是否在底部区域
 const checkIsAtBottom = () => {
@@ -79,8 +82,54 @@ const checkIsAtBottom = () => {
   return scrollHeight - scrollTop - clientHeight <= BOTTOM_THRESHOLD
 }
 
-// 标记：程序正在执行滚动，防止 handleScroll 误判
-let isProgrammaticScroll = false
+// 根据真实滚动位置同步自动跟随和置底按钮状态
+const syncScrollState = () => {
+  if (!messageListRef.value) return
+
+  const isAtBottom = checkIsAtBottom()
+  userHasScrolledUp.value = !isAtBottom
+  showScrollToBottomButton.value = !isAtBottom
+}
+
+const saveConversationScrollPosition = (conversationKey) => {
+  if (!conversationKey || !messageListRef.value) return
+
+  conversationScrollPositions.set(conversationKey, {
+    scrollTop: messageListRef.value.scrollTop,
+    isAtBottom: checkIsAtBottom(),
+  })
+}
+
+const restoreConversationScrollPosition = (conversationKey, previousConversationKey) => {
+  if (!messageListRef.value) return
+
+  let savedPosition = conversationScrollPositions.get(conversationKey)
+
+  // 草稿首次收到后端会话 ID 时仍是同一会话，沿用草稿的阅读位置
+  if (
+    !savedPosition &&
+    chatStore.isDraftConversationKey(previousConversationKey) &&
+    conversationScrollPositions.has(previousConversationKey)
+  ) {
+    savedPosition = conversationScrollPositions.get(previousConversationKey)
+    conversationScrollPositions.set(conversationKey, savedPosition)
+  }
+
+  if (savedPosition?.isAtBottom) {
+    messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+  } else if (savedPosition) {
+    const maxScrollTop = Math.max(
+      messageListRef.value.scrollHeight - messageListRef.value.clientHeight,
+      0,
+    )
+    messageListRef.value.scrollTop = Math.min(savedPosition.scrollTop, maxScrollTop)
+  } else {
+    // 首次打开会话仍默认展示最新消息
+    messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+  }
+
+  syncScrollState()
+}
 
 /**
  * 鼠标滚轮事件 —— 用户向上滚动时立即标记，
@@ -103,16 +152,7 @@ const handleScroll = () => {
   if (!messageListRef.value) return
 
   flashScrollbar()
-
-  if (checkIsAtBottom()) {
-    // 在底部 → 无论是程序滚动还是用户滚动，都恢复自动跟随
-    userHasScrolledUp.value = false
-    showScrollToBottomButton.value = false
-  } else if (!isProgrammaticScroll) {
-    // 不在底部 且 非程序触发 → 标记为用户主动上滑（兼容拖拽滚动条等场景）
-    userHasScrolledUp.value = true
-    showScrollToBottomButton.value = true
-  }
+  syncScrollState()
 }
 
 // 滚动到底部
@@ -123,15 +163,8 @@ const scrollToBottom = (force = false) => {
   if (force || !userHasScrolledUp.value) {
     nextTick(() => {
       if (messageListRef.value) {
-        // 标记为程序滚动，防止 handleScroll else 分支误判
-        isProgrammaticScroll = true
         messageListRef.value.scrollTop = messageListRef.value.scrollHeight
-        showScrollToBottomButton.value = false
-
-        // 50ms 后重置，确保本次 scroll 事件已处理完毕
-        setTimeout(() => {
-          isProgrammaticScroll = false
-        }, 50)
+        syncScrollState()
       }
     })
   }
@@ -177,27 +210,49 @@ watch(
   },
 )
 
-// 切换历史会话时重置滚动跟随状态，确保回到流式中的会话时能直接看到最新内容
+// 切换会话时保存离开位置，并恢复目标会话上次停留的阅读位置
 watch(
   () => chatStore.activeConversationKey,
-  () => {
+  (conversationKey, previousConversationKey) => {
+    saveConversationScrollPosition(previousConversationKey)
     userHasScrolledUp.value = false
     showScrollToBottomButton.value = false
-    scrollToBottom(true)
+    nextTick(() => {
+      restoreConversationScrollPosition(conversationKey, previousConversationKey)
+    })
   },
 )
 
 // 初始化：检查初始位置
 onMounted(() => {
   nextTick(() => {
-    if (messageListRef.value) {
-      const isAtBottom = checkIsAtBottom()
-      if (!isAtBottom) {
-        showScrollToBottomButton.value = true
-        userHasScrolledUp.value = true
-      }
+    syncScrollState()
+
+    if (messageListRef.value && typeof MutationObserver !== 'undefined') {
+      contentMutationObserver = new MutationObserver(() => {
+        nextTick(syncScrollState)
+      })
+      contentMutationObserver.observe(messageListRef.value, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      })
+    }
+
+    if (messageListRef.value && typeof ResizeObserver !== 'undefined') {
+      containerResizeObserver = new ResizeObserver(() => {
+        syncScrollState()
+      })
+      containerResizeObserver.observe(messageListRef.value)
     }
   })
+})
+
+onBeforeUnmount(() => {
+  saveConversationScrollPosition(chatStore.activeConversationKey)
+  contentMutationObserver?.disconnect()
+  containerResizeObserver?.disconnect()
+  if (scrollbarHideTimer) clearTimeout(scrollbarHideTimer)
 })
 </script>
 

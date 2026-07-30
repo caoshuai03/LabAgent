@@ -28,6 +28,7 @@
 import { onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
+import { useConfirm } from '../composables/useConfirm'
 import ConversationItem from './ConversationItem.vue'
 
 const props = defineProps({
@@ -46,6 +47,7 @@ const emit = defineEmits(['update:selectedIds', 'enterBatchMode'])
 const router = useRouter()
 const route = useRoute()
 const chatStore = useChatStore()
+const { confirm } = useConfirm()
 const openedMenuConversationId = ref(null)
 const isScrolling = ref(false)
 const lastSelectedConversationId = ref(null)
@@ -73,11 +75,18 @@ const handleSelect = (conversationId) => {
   }
 }
 
-const handleDelete = (conversationId) => {
+const handleDelete = async (conversationId) => {
   openedMenuConversationId.value = null
-  if (confirm('确定要删除这个对话吗？')) {
-    chatStore.deleteConversation(conversationId)
-  }
+  const confirmed = await confirm({
+    title: '删除对话',
+    message: '确定要删除这个对话吗？',
+    description: '删除后，对话内容将无法恢复。',
+    confirm_text: '确认删除',
+    tone: 'danger',
+  })
+  if (!confirmed) return
+
+  chatStore.deleteConversation(conversationId)
 }
 
 const handleRename = (conversationId, newTitle) => {

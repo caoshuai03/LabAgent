@@ -73,10 +73,12 @@ services:
       ARQ_JOB_TIMEOUT_SECONDS: ${ARQ_JOB_TIMEOUT_SECONDS:-1800}
       ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-2}
       TOOL_WORKSPACE_ROOT: /data/tool-workspaces
+      MEMORY_ROOT: /data/memory
       TOOL_RUNNER_BASE_URL: http://tool-runner:8990
       TOOL_RUNNER_TOKEN: ${TOOL_RUNNER_TOKEN:-}
     volumes:
       - tool_workspaces:/data/tool-workspaces
+      - user_memories:/data/memory
     networks:
       - default
       - tool_internal
@@ -150,6 +152,7 @@ volumes:
   redis_data:
   minio_data:
   tool_workspaces:
+  user_memories:
 
 networks:
   tool_internal:

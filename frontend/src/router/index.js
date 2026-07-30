@@ -23,6 +23,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/memory',
+    name: 'MemoryManagement',
+    component: () => import('../views/MemoryManagement.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/login',
     name: 'Login',
     component: Login,

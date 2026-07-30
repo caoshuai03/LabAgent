@@ -12,33 +12,7 @@
       @click="groupExpanded = !groupExpanded"
     >
       <span class="activity-group-icon" aria-hidden="true">
-        <svg
-          v-if="hasShellActivities"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <rect x="3" y="4" width="18" height="16" rx="3"></rect>
-          <path d="m7 9 3 3-3 3"></path>
-          <path d="M13 15h4"></path>
-        </svg>
-        <svg
-          v-else
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path>
-          <path d="M14 2v6h6"></path>
-          <path d="M8 13h8"></path>
-          <path d="M8 17h6"></path>
-        </svg>
+        <ToolActivityIcon tool-name="tool" />
       </span>
       <span class="activity-group-title">{{ groupTitle }}</span>
       <svg
@@ -298,8 +272,6 @@ const normalizeCommands = (activity) => {
   return []
 }
 
-const hasShellActivities = computed(() => activities.value.some(isShell))
-
 const groupTitle = computed(() => {
   const shellActivities = activities.value.filter(isShell)
   const readActivities = activities.value.filter(isReadActivity)
@@ -320,7 +292,7 @@ const groupTitle = computed(() => {
     return '等待确认命令'
   }
   if (allStatuses.includes('running') || allStatuses.includes('pending')) {
-    if (onlySkillActivities) return '正在加载 Skill'
+    if (onlySkillActivities) return '正在加载技能'
     if (shellActivities.length && readActivities.length) return '正在处理文件和命令'
     if (shellActivities.length) return '正在运行命令'
     if (readActivities.length) return '正在查看文件'
@@ -344,7 +316,7 @@ const groupTitle = computed(() => {
   if (shellActivities.length && readActivities.length) return `查看了文件，${shellTitle}`
   if (shellActivities.length) return shellTitle
   if (readActivities.length) return '查看了文件'
-  if (onlySkillActivities) return '加载了 Skill'
+  if (onlySkillActivities) return '加载了技能'
   return '执行了工具操作'
 })
 
@@ -365,9 +337,9 @@ const statusLabel = (status, labels) => {
 const getStatusLabel = (activity) => {
   if (isSkillActivity(activity)) {
     return statusLabel(activity.status, {
-      pending: '加载 Skill',
-      running: '加载 Skill',
-      success: '加载 Skill',
+      pending: '加载技能',
+      running: '加载技能',
+      success: '加载技能',
       failed: '加载失败',
     })
   }

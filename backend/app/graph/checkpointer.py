@@ -3,14 +3,43 @@
 @date: 2026-07-12
 @description: LangGraph 短期记忆 checkpointer——基于 AsyncPostgresSaver，复用现有 PostgreSQL 持久化对话状态
 """
+import importlib
+from typing import Any
+
 from psycopg_pool import AsyncConnectionPool
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.core.config import settings
+
+# 当前 LangGraph 0.x 依赖的 checkpoint 3.x 尚未显式设置 allowed_objects，
+# 在依赖导入期间只跳过该兼容性告警，随后为 checkpoint 显式配置消息对象白名单。
+_langchain_load = importlib.import_module("langchain_core.load.load")
+_warn_deprecated = _langchain_load.warn_deprecated
+
+
+def _warn_deprecated_except_checkpoint_policy(*args: Any, **kwargs: Any) -> None:
+    message = kwargs.get("message", "")
+    if isinstance(message, str) and message.startswith("The default value of `allowed_objects` will change"):
+        return
+    _warn_deprecated(*args, **kwargs)
+
+
+_langchain_load.warn_deprecated = _warn_deprecated_except_checkpoint_policy
+try:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from langgraph.checkpoint.serde import jsonplus as jsonplus_serde
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+finally:
+    _langchain_load.warn_deprecated = _warn_deprecated
 
 # 全局连接池与 saver 单例，随应用生命周期创建/关闭
 _pool: AsyncConnectionPool | None = None
 _saver: AsyncPostgresSaver | None = None
+
+
+def _create_checkpoint_serializer() -> JsonPlusSerializer:
+    """创建仅允许恢复 LangChain 消息对象的 checkpoint 序列化器。"""
+    jsonplus_serde.LC_REVIVER = _langchain_load.Reviver(allowed_objects="messages")
+    return JsonPlusSerializer()
 
 
 async def init_checkpointer() -> AsyncPostgresSaver:
@@ -26,7 +55,7 @@ async def init_checkpointer() -> AsyncPostgresSaver:
         kwargs={"autocommit": True, "prepare_threshold": 0},
     )
     await _pool.open()
-    _saver = AsyncPostgresSaver(conn=_pool)
+    _saver = AsyncPostgresSaver(conn=_pool, serde=_create_checkpoint_serializer())
     await _saver.setup()
     return _saver
 

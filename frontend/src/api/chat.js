@@ -95,6 +95,10 @@ export const cancelReactAgent = ({ sessionId, traceId }) => {
   })
 }
 
+export const compressConversation = (sessionId) => {
+  return apiClient.post(`/v1/ai/sessions/${sessionId}/compress`)
+}
+
 export const getAgentTools = () => {
   return apiClient.get('/v1/ai/tools')
 }

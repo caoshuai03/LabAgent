@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     # 链路追踪 logid（X-TT-LOGID）；留空则每次构造时自动生成
     azure_logid: str = ""
 
-    # 对话记忆窗口（用于 trim_messages 的最大消息条数）
-    memory_max_messages: int = 20
+    # 用户级 Markdown 长期记忆根目录；上下文 200K/80%/10% 阈值按实现约定固定，不做配置
+    memory_root: str = "./data/memory"
     # 新会话标题生成：失败或超时时自动保留首条消息截断标题
     conversation_title_enabled: bool = True
     conversation_title_model: str = ""

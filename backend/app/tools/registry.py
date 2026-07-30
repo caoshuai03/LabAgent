@@ -12,6 +12,7 @@ from app.schemas.tool import ToolDefinitionVO
 from app.services.skill_service import skill_catalog
 from app.tools.file_tools import FILE_TOOLS
 from app.tools.knowledge_tool import KNOWLEDGE_TOOLS
+from app.tools.memory_tools import MEMORY_TOOLS
 from app.tools.shell_tool import execute_shell
 from app.tools.skill_tools import SKILL_TOOLS
 
@@ -29,7 +30,7 @@ class ToolRegistry:
     """统一管理框架工具和可见性。"""
 
     def __init__(self) -> None:
-        tools = [*FILE_TOOLS, *KNOWLEDGE_TOOLS, execute_shell, *SKILL_TOOLS]
+        tools = [*FILE_TOOLS, *KNOWLEDGE_TOOLS, execute_shell, *SKILL_TOOLS, *MEMORY_TOOLS]
         self._tools: dict[str, BaseTool] = {}
         for tool_item in tools:
             if tool_item.name in self._tools:
@@ -41,6 +42,11 @@ class ToolRegistry:
             "execute_shell": ToolMetadata("langchain_shell", "high", False),
             "activate_skill": ToolMetadata("skill", "low", True),
             "read_skill_resource": ToolMetadata("skill", "low", True),
+            "memory_find": ToolMetadata("memory", "low", True),
+            "memory_grep": ToolMetadata("memory", "low", True),
+            "memory_read": ToolMetadata("memory", "low", True),
+            "remember_memory": ToolMetadata("memory", "medium", False),
+            "forget_memory": ToolMetadata("memory", "medium", False),
         }
 
     def all_tools(self) -> list[BaseTool]:
@@ -52,6 +58,7 @@ class ToolRegistry:
         if not settings.agent_tools_enabled:
             return []
         names: list[str] = ["search_knowledge_base"]
+        names.extend(tool_item.name for tool_item in MEMORY_TOOLS)
         if settings.skills_enabled and skill_catalog.list_summaries():
             names.extend(tool_item.name for tool_item in SKILL_TOOLS)
         if settings.file_tools_enabled:

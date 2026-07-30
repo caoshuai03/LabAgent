@@ -67,7 +67,9 @@
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
               </svg>
             </button>
-            <span v-if="messageTime" class="message-time">{{ messageTime }}</span>
+            <span v-if="message.sender === 'assistant' && messageTime" class="message-time">
+              {{ messageTime }}
+            </span>
           </div>
         </div>
       </div>
@@ -98,7 +100,10 @@ const messageTextRef = ref(null)
 const copied = ref(false)
 
 const showMessageActions = computed(() => {
-  return props.message.sender === 'assistant' && props.message.isComplete
+  return (
+    props.message.sender === 'user' ||
+    (props.message.sender === 'assistant' && props.message.isComplete)
+  )
 })
 
 const messageTime = computed(() => {
@@ -421,13 +426,45 @@ watch(
     }
 
     .message-content {
+      flex: 0 1 auto;
+      width: fit-content;
+      max-width: 100%;
       align-items: flex-end;
+    }
+
+    .message-footer {
+      align-self: stretch;
+      width: auto;
+      justify-content: flex-end;
+      padding-left: 0;
+    }
+
+    .message-actions {
+      justify-content: flex-end;
+    }
+
+    .action-button {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    &:hover .action-button,
+    &:focus-within .action-button {
+      opacity: 1;
+      pointer-events: auto;
     }
 
     .message-text {
       background-color: var(--user-message-bg);
       color: var(--user-message-text);
       white-space: pre-wrap;
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+      .action-button {
+        opacity: 1;
+        pointer-events: auto;
+      }
     }
   }
 

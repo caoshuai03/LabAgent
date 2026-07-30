@@ -15,10 +15,14 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langgraph.types import Command
 
 from app.core.config import settings
+from app.core.errors import BusinessException, ErrorCode
 from app.db.session import async_session_factory
-from app.graph.chat_graph import get_chat_graph
+from app.graph.chat_graph import build_base_system_prompt, get_chat_graph
+from app.schemas.memory import ConversationCompressionVO
+from app.services.conversation_compaction_service import conversation_compaction_service
 from app.services.conversation_title_queue import enqueue_conversation_title
 from app.services.message_service import MessageService
+from app.services.memory_extraction_service import memory_extraction_scheduler
 from app.services.session_service import SessionService
 from app.services.tool_call_service import ToolCallService
 from app.tools.registry import tool_registry
@@ -173,6 +177,90 @@ class AiService:
     def __init__(self) -> None:
         self._running_tasks: dict[str, tuple[int, str, asyncio.Task[Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._compression_locks: dict[tuple[int, str], asyncio.Lock] = {}
+
+    async def compress_session(
+        self,
+        session_id: str,
+        user_id: int,
+    ) -> ConversationCompressionVO:
+        """主动压缩当前用户会话的 LangGraph 工作上下文。"""
+        async with async_session_factory() as db:
+            await SessionService(db).get_owned_session(session_id, user_id)
+        if any(
+            running_user_id == user_id
+            and running_session_id == session_id
+            and not task.done()
+            for running_user_id, running_session_id, task in self._running_tasks.values()
+        ):
+            raise BusinessException(ErrorCode.OPERATION_ERROR, "会话正在生成回答，暂时不能压缩")
+
+        key = (user_id, session_id)
+        lock = self._compression_locks.setdefault(key, asyncio.Lock())
+        if lock.locked():
+            raise BusinessException(ErrorCode.OPERATION_ERROR, "当前会话正在压缩")
+        try:
+            async with lock:
+                graph = get_chat_graph()
+                config = {"configurable": {"thread_id": f"{user_id}:{session_id}"}}
+                snapshot = await graph.aget_state(config)
+                values = dict(snapshot.values) if snapshot is not None else {}
+                if not values or str(values.get("session_id") or "") != session_id:
+                    return ConversationCompressionVO(
+                        compressed=False,
+                        before_tokens=0,
+                        after_tokens=0,
+                    )
+                if getattr(snapshot, "interrupts", ()) or ():
+                    raise BusinessException(
+                        ErrorCode.OPERATION_ERROR,
+                        "会话正在等待工具审批，暂时不能压缩",
+                    )
+
+                model_name = values.get("model_name")
+                try:
+                    result = await conversation_compaction_service.compact(
+                        list(values.get("messages") or []),
+                        existing_summary=values.get("conversation_summary"),
+                        model_name=str(model_name) if model_name else None,
+                        system_prompt=build_base_system_prompt(values),
+                        tools=tool_registry.model_tools(),
+                        force=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "会话上下文主动压缩失败: user_id=%s, session_id=%s",
+                        user_id,
+                        session_id,
+                    )
+                    raise
+                if result.compressed:
+                    await graph.aupdate_state(
+                        config,
+                        result.state_update,
+                        as_node="finalize",
+                    )
+                logger.info(
+                    "会话上下文主动压缩完成: user_id=%s, session_id=%s, compressed=%s, before_tokens=%s, after_tokens=%s, compressed_messages=%s",
+                    user_id,
+                    session_id,
+                    result.compressed,
+                    result.before_tokens,
+                    result.after_tokens,
+                    result.compressed_message_count,
+                )
+                summary_preview = ""
+                if result.summary is not None:
+                    summary_preview = result.summary.model_dump_json()[:500]
+                return ConversationCompressionVO(
+                    compressed=result.compressed,
+                    compressed_message_count=result.compressed_message_count,
+                    before_tokens=result.before_tokens,
+                    after_tokens=result.after_tokens,
+                    summary_preview=summary_preview,
+                )
+        finally:
+            self._compression_locks.pop(key, None)
 
     def _schedule_cancel_cleanup(self, trace_id: str) -> None:
         """在独立任务中清理已取消的工具记录，避免请求取消作用域中断数据库操作。"""
@@ -378,7 +466,7 @@ class AiService:
         graph = get_chat_graph()
         config = {
             "configurable": {"thread_id": f"{user_id}:{session_id}", "model": model},
-            "recursion_limit": max(settings.agent_max_tool_rounds * 4 + 10, 30),
+            "recursion_limit": max(settings.agent_max_tool_rounds * 5 + 10, 30),
         }
         full_response: list[str] = []
         final_content = ""
@@ -718,6 +806,7 @@ class AiService:
                     await ToolCallService(db).link_message(record_trace_id, message.id)
                     await SessionService(db).touch(sid)
                     await db.commit()
+                memory_extraction_scheduler.schedule(user_id, session_id, model)
             if answer and title_source_message:
                 await self._enqueue_session_title(
                     sid,

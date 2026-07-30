@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
@@ -85,6 +85,29 @@ class FakeMultiToolModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=response)])
 
 
+class FakeRecordingModel(BaseChatModel):
+    """记录 Agent 实际收到的消息。"""
+
+    received_messages: list[BaseMessage] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake-recording-model"
+
+    def bind_tools(self, tools: Any, **kwargs: Any):
+        return self
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        self.received_messages = messages
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="继续回答"))])
+
+
 def _graph_input(session_id: str) -> dict[str, Any]:
     return {
         "messages": [("user", "执行工具")],
@@ -134,8 +157,94 @@ async def test_agent_executes_file_tool(graph_environment, monkeypatch) -> None:
     target = workspace_manager.root / "1" / session_id / "output" / "test.txt"
     assert target.read_text(encoding="utf-8") == "hello"
     assert nodes == [
-        "prepare_context", "agent", "authorize_tools", "tools", "agent", "finalize",
+        "repair_interrupted_tools",
+        "prepare_context",
+        "compact_context",
+        "agent",
+        "authorize_tools",
+        "tools",
+        "compact_context",
+        "agent",
+        "finalize",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_repairs_tool_call_interrupted_by_restart(
+    graph_environment,
+    monkeypatch,
+) -> None:
+    """新回合应清除重启前未产生 ToolMessage 的工具调用，避免模型请求消息序列非法。"""
+    model = FakeRecordingModel()
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
+    graph = chat_graph._build_graph()
+    session_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": f"1:{session_id}"}}
+    interrupted_message = AIMessage(
+        id="interrupted-ai",
+        content="",
+        tool_calls=[
+            {
+                "name": "search_knowledge_base",
+                "args": {"query": "图遍历算法"},
+                "id": "interrupted-call",
+                "type": "tool_call",
+            }
+        ],
+    )
+    await graph.aupdate_state(
+        config,
+        {
+            **_graph_input(session_id),
+            "messages": [
+                HumanMessage(id="old-human", content="写一个图遍历算法"),
+                interrupted_message,
+            ],
+        },
+        as_node="finalize",
+    )
+
+    result = await graph.ainvoke(_graph_input(session_id), config=config)
+
+    assert all(message.id != interrupted_message.id for message in result["messages"])
+    assert all(message.id != interrupted_message.id for message in model.received_messages)
+    assert result["messages"][-1].content == "继续回答"
+
+
+@pytest.mark.asyncio
+async def test_agent_accepts_json_conversation_summary(
+    graph_environment,
+    monkeypatch,
+) -> None:
+    """压缩摘要中的 JSON 大括号不得被识别为 Prompt 模板变量。"""
+    model = FakeRecordingModel()
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
+    graph = chat_graph._build_graph()
+    session_id = str(uuid.uuid4())
+    graph_input = {
+        **_graph_input(session_id),
+        "conversation_summary": {
+            "user_goal": "继续完成实验",
+            "confirmed_facts": ["环境正常"],
+        },
+    }
+
+    result = await graph.ainvoke(
+        graph_input,
+        config={"configurable": {"thread_id": f"1:{session_id}"}},
+    )
+
+    assert result["messages"][-1].content == "继续回答"
+    assert isinstance(model.received_messages[0], SystemMessage)
+    assert '"user_goal": "继续完成实验"' in str(model.received_messages[0].content)
 
 
 @pytest.mark.asyncio

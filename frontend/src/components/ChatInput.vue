@@ -19,27 +19,54 @@
       ></textarea>
 
       <div class="input-footer">
-        <button
-          type="button"
-          class="action-button attach-button disabled-btn"
-          v-tooltip="'附件上传功能开发中'"
-          aria-label="附件上传功能开发中"
-        >
-          <svg
-            stroke="currentColor"
-            fill="none"
-            stroke-width="2.2"
-            viewBox="0 0 24 24"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            height="1em"
-            width="1em"
-            xmlns="http://www.w3.org/2000/svg"
+        <div class="input-left-actions">
+          <button
+            type="button"
+            class="action-button attach-button disabled-btn"
+            v-tooltip="'附件上传功能开发中'"
+            aria-label="附件上传功能开发中"
           >
-            <path d="M12 5v14"></path>
-            <path d="M5 12h14"></path>
-          </svg>
-        </button>
+            <svg
+              stroke="currentColor"
+              fill="none"
+              stroke-width="2.2"
+              viewBox="0 0 24 24"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              height="1em"
+              width="1em"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path d="M12 5v14"></path>
+              <path d="M5 12h14"></path>
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="action-button compact-button"
+            :class="{ 'disabled-btn': !canCompress }"
+            :disabled="!canCompress"
+            v-tooltip="isCompressing ? '正在压缩上下文' : '压缩上下文'"
+            aria-label="压缩上下文"
+            @click="handleCompress"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3v5H3"></path>
+              <path d="M16 3v5h5"></path>
+              <path d="M8 21v-5H3"></path>
+              <path d="M16 21v-5h5"></path>
+            </svg>
+          </button>
+        </div>
 
         <div class="input-actions">
           <div class="input-model-selector" v-click-outside="closeModelDropdown">
@@ -138,20 +165,24 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import {
   cancelReactAgent,
+  compressConversation,
   getSessionTitle,
   resumeReactAgent,
   sendReactAgentMessage,
 } from '../api/chat'
 import { AVAILABLE_MODELS } from '../constants/models'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
+import { useToast } from '../composables/useToast'
 
 const chatStore = useChatStore()
+const toast = useToast()
 
 const inputText = ref('')
 const inputRef = ref(null)
 const showScrollbar = ref(false)
 const isExpanded = ref(false)
 const showModelDropdown = ref(false)
+const isCompressing = ref(false)
 
 const MIN_HEIGHT = 24
 const MAX_HEIGHT = 320
@@ -183,6 +214,36 @@ const canSend = computed(() => {
     !chatStore.awaitingApproval
   )
 })
+
+const canCompress = computed(() => {
+  return Boolean(
+    chatStore.currentConversationId
+      && !chatStore.isStreaming
+      && !chatStore.awaitingApproval
+      && !isCompressing.value,
+  )
+})
+
+const handleCompress = async () => {
+  if (!canCompress.value) return
+  isCompressing.value = true
+  try {
+    const response = await compressConversation(chatStore.currentConversationId)
+    const result = response.data.data
+    if (!result?.compressed) {
+      toast.info('当前上下文无需压缩')
+      return
+    }
+    toast.success(
+      `上下文已压缩：${result.before_tokens} → ${result.after_tokens} tokens`,
+      5000,
+    )
+  } catch (error) {
+    toast.error(error.response?.data?.message || '上下文压缩失败')
+  } finally {
+    isCompressing.value = false
+  }
+}
 
 const toggleModelDropdown = () => {
   if (chatStore.isStreaming || chatStore.awaitingApproval) return
@@ -754,6 +815,12 @@ onUnmounted(() => {
   gap: 12px;
   margin-top: 0;
 
+  .input-left-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .action-button {
     display: flex;
     align-items: center;
@@ -788,6 +855,28 @@ onUnmounted(() => {
         width: 20px;
         height: 20px;
         stroke-width: 2;
+      }
+    }
+
+    &.compact-button {
+      width: 24px;
+      height: 24px;
+      background-color: transparent;
+      color: var(--text-secondary);
+
+      &:hover:not(.disabled-btn) {
+        background-color: var(--bg-hover);
+        color: var(--primary-color);
+      }
+
+      &.disabled-btn {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      svg {
+        width: 17px;
+        height: 17px;
       }
     }
   }

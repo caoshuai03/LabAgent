@@ -62,6 +62,10 @@ class ToolPolicy:
             if not settings.skills_enabled:
                 return ToolPolicyDecision(False, False, "low", "Skills 未启用")
             return ToolPolicyDecision(True, False, "low")
+        if tool_name in {"memory_find", "memory_grep", "memory_read"}:
+            return ToolPolicyDecision(True, False, "low")
+        if tool_name in {"remember_memory", "forget_memory"}:
+            return ToolPolicyDecision(True, False, "medium")
         if tool_name in _FILE_PATH_FIELDS:
             return self._evaluate_file(tool_name, arguments, workspace)
         if tool_name == "execute_shell":

@@ -312,6 +312,7 @@ import UploadIcon from '../components/icons/UploadIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import TrashIcon from '../components/icons/TrashIcon.vue'
 import SearchIcon from '../components/icons/SearchIcon.vue'
+import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 
 // 初始化 chatStore 和 userStore
@@ -319,6 +320,7 @@ const chatStore = useChatStore()
 const userStore = useUserStore()
 const knowledgeUploadStore = useKnowledgeUploadStore()
 const route = useRoute()
+const { confirm } = useConfirm()
 
 // 全局 toast：统一成功/失败反馈
 const toast = useToast()
@@ -709,9 +711,15 @@ const handleDelete = async (id, fileName) => {
     showMessage('仅管理员可操作知识库，请联系管理员', 'warning')
     return
   }
-  if (!confirm(`确定要删除文件 "${fileName}" 吗？`)) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '删除文件',
+    message: `确定要删除文件“${fileName}”吗？`,
+    description: '删除后，文件及其知识库索引将无法恢复。',
+    confirm_text: '确认删除',
+    tone: 'danger',
+  })
+  if (!confirmed) return
+
   await deleteFiles([id])
 }
 
@@ -721,9 +729,15 @@ const handleBatchDelete = async () => {
     return
   }
   if (selectedIds.value.length === 0) return
-  if (!confirm(`确定要删除选中的 ${selectedIds.value.length} 个文件吗？`)) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '批量删除文件',
+    message: `确定要删除选中的 ${selectedIds.value.length} 个文件吗？`,
+    description: '删除后，所选文件及其知识库索引将无法恢复。',
+    confirm_text: '确认删除',
+    tone: 'danger',
+  })
+  if (!confirmed) return
+
   await deleteFiles([...selectedIds.value])
 }
 

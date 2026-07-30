@@ -50,10 +50,19 @@
         <button
           @click="handleSkillsManagement"
           :class="['nav-item', { active: isNavActive('/skills') }]"
-          v-tooltip="chatStore.sidebarCollapsed ? 'Skills' : ''"
+          v-tooltip="chatStore.sidebarCollapsed ? '技能' : ''"
         >
           <BookIcon :size="18" />
-          <span v-if="showExpandedSidebar">Skills</span>
+          <span v-if="showExpandedSidebar">技能</span>
+        </button>
+
+        <button
+          @click="handleMemoryManagement"
+          :class="['nav-item', { active: isNavActive('/memory') }]"
+          v-tooltip="chatStore.sidebarCollapsed ? '规则与记忆' : ''"
+        >
+          <RulesMemoryIcon :size="18" />
+          <span v-if="showExpandedSidebar">规则与记忆</span>
         </button>
       </div>
     </div>
@@ -100,11 +109,13 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
+import { useConfirm } from '../composables/useConfirm'
 import ConversationList from './ConversationList.vue'
 import UserProfile from './UserProfile.vue'
 import PlusIcon from './icons/PlusIcon.vue'
 import FolderIcon from './icons/FolderIcon.vue'
 import BookIcon from './icons/BookIcon.vue'
+import RulesMemoryIcon from './icons/RulesMemoryIcon.vue'
 
 import ChevronLeftIcon from './icons/ChevronLeftIcon.vue'
 import ChevronRightIcon from './icons/ChevronRightIcon.vue'
@@ -112,6 +123,7 @@ import ChevronRightIcon from './icons/ChevronRightIcon.vue'
 const router = useRouter()
 const route = useRoute()
 const chatStore = useChatStore()
+const { confirm } = useConfirm()
 
 defineOptions({ name: 'AppSidebar' })
 
@@ -140,12 +152,19 @@ const handleEnterBatchModeFromItem = () => {
 const handleBatchDelete = async () => {
   if (selectedIds.value.length === 0) return
 
-  if (confirm(`确定要删除选中的 ${selectedIds.value.length} 个对话吗？`)) {
-    const success = await chatStore.deleteConversations(selectedIds.value)
-    if (success) {
-      isSelectionMode.value = false
-      selectedIds.value = []
-    }
+  const confirmed = await confirm({
+    title: '批量删除对话',
+    message: `确定要删除选中的 ${selectedIds.value.length} 个对话吗？`,
+    description: '删除后，所选对话内容将无法恢复。',
+    confirm_text: '确认删除',
+    tone: 'danger',
+  })
+  if (!confirmed) return
+
+  const success = await chatStore.deleteConversations(selectedIds.value)
+  if (success) {
+    isSelectionMode.value = false
+    selectedIds.value = []
   }
 }
 
@@ -169,6 +188,10 @@ const handleKnowledgeManagement = () => {
 
 const handleSkillsManagement = () => {
   router.push('/skills')
+}
+
+const handleMemoryManagement = () => {
+  router.push('/memory')
 }
 
 const stopResize = () => {

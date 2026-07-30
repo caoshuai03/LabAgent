@@ -18,6 +18,7 @@ from app.schemas.chat import (
     HistoryRequest,
 )
 from app.schemas.chat import ChatSessionVO
+from app.schemas.memory import ConversationCompressionVO
 from app.schemas.tool import AgentCancelRequest, AgentResumeRequest, ToolDefinitionVO, WorkspaceFileVO
 from app.core.response import BaseResponse, success
 from app.services.ai_service import AiService
@@ -72,6 +73,15 @@ async def resume_agent(req: AgentResumeRequest, current_user: CurrentUser) -> St
 async def cancel_agent(req: AgentCancelRequest, current_user: CurrentUser) -> BaseResponse[bool]:
     """取消当前用户指定会话中的 Agent 运行。"""
     return success(await _ai_service.cancel_run(req.session_id, req.trace_id, current_user.id))
+
+
+@router.post("/sessions/{session_id}/compress")
+async def compress_session(
+    session_id: str,
+    current_user: CurrentUser,
+) -> BaseResponse[ConversationCompressionVO]:
+    """主动压缩当前用户会话的 LangGraph 工作上下文。"""
+    return success(await _ai_service.compress_session(session_id, current_user.id))
 
 
 @router.get("/tools")

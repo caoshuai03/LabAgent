@@ -37,6 +37,7 @@ dist-ssr/
 *.tmp
 *.bak
 *~
+backend/data/memory/
 
 # IDE 与操作系统文件
 .idea/

@@ -7,6 +7,7 @@
       <component :is="Component" />
     </keep-alive>
   </router-view>
+  <ConfirmDialog />
   <ToastContainer />
 </template>
 
@@ -16,6 +17,7 @@
 import 'highlight.js/styles/github.css'
 import { onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import { useKnowledgeUploadStore } from './stores/knowledgeUpload'
 
