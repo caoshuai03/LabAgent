@@ -204,7 +204,7 @@ const activities = computed(() => {
           toolName: 'global_timeout',
           arguments: {},
           status: 'timeout',
-          resultSummary: `Agent执行超时（${payload.timeout_seconds || 180}秒）`,
+          resultSummary: `Agent执行超时（${payload.timeout_seconds || 1200}秒）`,
           outputPreview: '',
           errorMessage: payload.message || '',
           durationMs: null,

@@ -72,6 +72,7 @@ npm run dev
 ## 配置
 
 完整配置见 [.env.example](.env.example)。部署前至少需要确认模型配置，并替换 `JWT_SECRET_KEY` 等默认敏感值。
+ARQ 默认使用 Redis DB 0，接口缓存通过 `REDIS_CACHE_URL` 使用独立的 DB 1；缓存故障时接口自动回源。
 
 ## 文档
 

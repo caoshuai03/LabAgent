@@ -35,10 +35,10 @@ class SandboxShellProcess:
         payload = {
             "commands": commands if isinstance(commands, list) else [commands],
             "workspace_path": str(self.workspace),
-            "timeout_seconds": settings.shell_timeout_seconds,
+            "timeout_seconds": settings.tool_timeout_seconds,
             "max_output_chars": settings.tool_max_output_chars,
         }
-        with httpx.Client(timeout=settings.shell_timeout_seconds + 5) as client:
+        with httpx.Client(timeout=settings.tool_timeout_seconds + 5) as client:
             response = client.post(
                 f"{settings.tool_runner_base_url.rstrip('/')}/execute",
                 json=payload,

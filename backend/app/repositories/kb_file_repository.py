@@ -44,6 +44,15 @@ class KbFileRepository:
         """根据 ID 查询文件记录。"""
         return await self.session.get(KbFile, file_id)
 
+    async def get_by_ids(self, file_ids: list[int]) -> dict[int, KbFile]:
+        """批量查询文件记录并按 ID 返回，避免逐条查询。"""
+        if not file_ids:
+            return {}
+        records = (
+            await self.session.execute(select(KbFile).where(KbFile.id.in_(file_ids)))
+        ).scalars().all()
+        return {record.id: record for record in records}
+
     async def page(self, file_name: str | None, page: int, page_size: int) -> tuple[int, list[KbFile]]:
         """分页查询文件记录，可按文件名模糊过滤。"""
         count_stmt = select(func.count()).select_from(KbFile)

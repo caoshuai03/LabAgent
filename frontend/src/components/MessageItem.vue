@@ -70,7 +70,11 @@
         <div v-if="message.sender === 'assistant' && sources.length > 0" class="sources-panel">
           <div class="sources-title">引用来源</div>
           <div class="sources-list">
-            <div v-for="(source, idx) in sources" :key="`source-${idx}`" class="source-item">
+            <div
+              v-for="(source, idx) in visibleSources"
+              :key="`source-${idx}`"
+              class="source-item"
+            >
               <div class="source-header">
                 <span class="source-index">{{ idx + 1 }}</span>
                 <span class="source-name" v-tooltip="source.file_name || '未知来源'">
@@ -83,6 +87,29 @@
               <div v-if="source.snippet" class="source-snippet">{{ source.snippet }}</div>
             </div>
           </div>
+          <button
+            v-if="hasCollapsedSources"
+            type="button"
+            class="sources-toggle"
+            :aria-expanded="sourcesExpanded"
+            :aria-label="sourcesExpanded ? '收起引用' : `展开 ${hiddenSourceCount} 条引用`"
+            @click="sourcesExpanded = !sourcesExpanded"
+          >
+            <svg
+              :class="{ expanded: sourcesExpanded }"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
         </div>
 
         <div class="message-footer">
@@ -142,6 +169,8 @@ const props = defineProps({
 const chatStore = useChatStore()
 const messageTextRef = ref(null)
 const copied = ref(false)
+const sourcesExpanded = ref(false)
+const DEFAULT_VISIBLE_SOURCE_COUNT = 5
 
 const showMessageActions = computed(() => {
   return (
@@ -172,6 +201,18 @@ const messageTime = computed(() => {
 
 const sources = computed(() => {
   return Array.isArray(props.message.sources) ? props.message.sources : []
+})
+
+const visibleSources = computed(() => {
+  return sourcesExpanded.value ? sources.value : sources.value.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT)
+})
+
+const hiddenSourceCount = computed(() => {
+  return Math.max(0, sources.value.length - DEFAULT_VISIBLE_SOURCE_COUNT)
+})
+
+const hasCollapsedSources = computed(() => {
+  return sources.value.length > DEFAULT_VISIBLE_SOURCE_COUNT
 })
 
 const messageImages = computed(() => {
@@ -589,19 +630,23 @@ watch(
 }
 
 .message-skill {
-  display: inline-flex;
-  align-items: center;
+  position: relative;
+  display: inline-block;
   min-width: 0;
+  padding-left: 22px;
   color: var(--primary-color, #90138b);
   font-size: 15px;
   font-weight: 600;
   line-height: 1.6;
+  white-space: nowrap;
 
   :deep(.tool-activity-icon) {
+    position: absolute;
+    top: 50%;
+    left: 0;
     width: 17px;
     height: 17px;
-    margin-right: 5px;
-    flex-shrink: 0;
+    transform: translateY(-50%);
   }
 }
 
@@ -1003,15 +1048,9 @@ watch(
 .source-index {
   flex-shrink: 0;
   width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: rgba(144, 19, 139, 0.08);
-  color: #90138b;
+  color: var(--text-secondary, #6b7280);
   font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  text-align: center;
 }
 
 .source-name {
@@ -1038,6 +1077,39 @@ watch(
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.sources-toggle {
+  width: 28px;
+  height: 24px;
+  margin: 8px auto 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--hover-bg, #f3f4f6);
+    color: var(--text-primary, #374151);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(144, 19, 139, 0.25);
+    outline-offset: 2px;
+  }
+
+  svg {
+    transition: transform 0.2s ease;
+
+    &.expanded {
+      transform: rotate(180deg);
+    }
+  }
 }
 
 .message-actions {

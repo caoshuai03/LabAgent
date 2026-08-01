@@ -38,10 +38,6 @@ _AZURE_MODELS = {
     "gpt-5.5-2026-04-24",
 }
 
-# 外部调用超时（秒），避免阻塞
-_REQUEST_TIMEOUT = 50
-
-
 class ModelProvider:
     """大模型提供器，按模型名选择本地或外部 provider。"""
 
@@ -152,7 +148,7 @@ class ModelProvider:
             operation_name="query_rewrite",
             reasoning=False,
             temperature=0,
-            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+            client_kwargs={"timeout": settings.model_request_timeout_seconds},
         )
 
     def get_rerank_model(self) -> BaseChatModel:
@@ -167,7 +163,7 @@ class ModelProvider:
             reasoning=False,
             num_predict=settings.rag_rerank_num_predict,
             temperature=0,
-            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+            client_kwargs={"timeout": settings.model_request_timeout_seconds},
         )
 
     def get_conversation_title_model(self, model: str | None = None) -> BaseChatModel:
@@ -182,7 +178,7 @@ class ModelProvider:
             reasoning=False,
             num_predict=settings.conversation_title_num_predict,
             temperature=0,
-            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+            client_kwargs={"timeout": settings.model_request_timeout_seconds},
         )
 
     def _build_ollama(
@@ -197,7 +193,7 @@ class ModelProvider:
             endpoint_pool=self._ollama_endpoint_pool,
             operation_name=operation_name,
             reasoning=True if operation_name == "agent" else None,
-            client_kwargs={"timeout": _REQUEST_TIMEOUT},
+            client_kwargs={"timeout": settings.model_request_timeout_seconds},
         )
 
     def _build_openai(self, model_name: str) -> ChatOpenAI:
@@ -206,7 +202,7 @@ class ModelProvider:
             model=model_name,
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
-            timeout=_REQUEST_TIMEOUT,
+            timeout=settings.model_request_timeout_seconds,
         )
 
     def _build_azure(self, model_name: str) -> AzureChatOpenAI:
@@ -224,7 +220,7 @@ class ModelProvider:
             openai_api_key=settings.azure_api_key,
             deployment_name=model_name,
             default_headers={"X-TT-LOGID": logid},
-            timeout=_REQUEST_TIMEOUT,
+            timeout=settings.model_request_timeout_seconds,
             max_retries=0,
         )
 

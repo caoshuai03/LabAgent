@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     # Redis + ARQ 异步任务
     redis_url: str = "redis://localhost:6379/0"
+    redis_cache_url: str = "redis://localhost:6379/1"
+    redis_cache_timeout_seconds: float = 1.0
+    skill_cache_ttl_seconds: int = 1800
+    knowledge_cache_ttl_seconds: int = 30
     arq_queue_name: str = "kb_upload"
     arq_job_timeout_seconds: int = 1800
     arq_max_jobs: int = 2
@@ -52,6 +56,8 @@ class Settings(BaseSettings):
     ollama_retry_other_endpoint_on_failure: bool = False
     ollama_chat_model: str = "qwen3.5:35b"
     ollama_embedding_model: str = "turingdance/gte-large-zh:latest"
+    # 对话模型单次请求超时（秒），流式响应期间连续无数据超过该时长即失败
+    model_request_timeout_seconds: int = 300
     # 嵌入模型请求超时（秒）：Ollama 不可达时快速失败以触发检索降级，避免拖死整个对话
     ollama_embedding_timeout: int = 120
     # 评测裁判模型请求超时（秒）：RAGAS 结构化判断比普通聊天更慢，需单独放宽
@@ -113,9 +119,8 @@ class Settings(BaseSettings):
     tool_workspace_root: str = "./data/tool-workspaces"
     tool_max_write_chars: int = 24000
     tool_max_output_chars: int = 12000
-    tool_timeout_seconds: int = 60
-    shell_timeout_seconds: int = 20
-    agent_timeout_seconds: int = 180
+    tool_timeout_seconds: int = 120
+    agent_timeout_seconds: int = 1200
     agent_max_tool_rounds: int = 50
     # 同一工具+同参数在单次 Agent 运行内的最大重复调用次数，超过即拒绝该调用
     agent_duplicate_tool_call_limit: int = 3

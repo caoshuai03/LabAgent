@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from app.core.deps import AdminUser, CurrentUser, DbSession
 from app.core.response import BaseResponse, PageResult, success
 from app.schemas.knowledge import KbFileVO, KbUploadTaskVO
+from app.services.knowledge_cache import invalidate_knowledge_cache
 from app.services.knowledge_service import KnowledgeService
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -98,6 +99,8 @@ async def update(
         data,
         file.content_type,
     )
+    await db.commit()
+    await invalidate_knowledge_cache()
     return success(vo)
 
 
@@ -118,6 +121,9 @@ async def query_files(
 async def delete_files(admin: AdminUser, db: DbSession, ids: Annotated[list[int], Query()]) -> BaseResponse[bool]:
     """删除文件记录与 MinIO 对象（管理员）。"""
     result = await KnowledgeService(db).delete_files(ids)
+    await db.commit()
+    if result:
+        await invalidate_knowledge_cache()
     return success(result)
 
 

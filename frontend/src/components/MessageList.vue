@@ -5,7 +5,6 @@
       :class="{ 'is-scrolling': isScrolling }"
       ref="messageListRef"
       @scroll="handleScroll"
-      @wheel="handleWheel"
     >
       <MessageItem
         v-for="message in chatStore.messages"
@@ -69,7 +68,7 @@ const flashScrollbar = () => {
   }, 800)
 }
 
-const BOTTOM_THRESHOLD = 100
+const BOTTOM_THRESHOLD = 1
 const conversationScrollPositions = new Map()
 let contentMutationObserver = null
 let containerResizeObserver = null
@@ -82,7 +81,7 @@ const checkIsAtBottom = () => {
   return scrollHeight - scrollTop - clientHeight <= BOTTOM_THRESHOLD
 }
 
-// 根据真实滚动位置同步自动跟随和置底按钮状态
+// 根据距离底部的位置同步自动跟随和置底按钮状态
 const syncScrollState = () => {
   if (!messageListRef.value) return
 
@@ -128,25 +127,12 @@ const restoreConversationScrollPosition = (conversationKey, previousConversation
     messageListRef.value.scrollTop = messageListRef.value.scrollHeight
   }
 
+  userHasScrolledUp.value = !checkIsAtBottom()
   syncScrollState()
 }
 
 /**
- * 鼠标滚轮事件 —— 用户向上滚动时立即标记，
- * wheel 事件在 scroll 事件之前触发，因此不受异步延迟影响，
- * 可以在下一个 token 到达前抢先设置 userHasScrolledUp。
- */
-const handleWheel = (e) => {
-  if (e.deltaY < 0) {
-    // deltaY < 0 表示用户向上滚动
-    userHasScrolledUp.value = true
-    showScrollToBottomButton.value = true
-  }
-}
-
-/**
- * scroll 事件 —— 同步检查位置（不做防抖），
- * 滚回底部时恢复自动跟随；不在底部且非程序滚动时标记上滑。
+ * scroll 事件同步检查距底部的位置，不做防抖。
  */
 const handleScroll = () => {
   if (!messageListRef.value) return

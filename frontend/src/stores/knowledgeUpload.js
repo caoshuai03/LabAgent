@@ -25,6 +25,7 @@ const responseRecords = (data) => {
 
 export const useKnowledgeUploadStore = defineStore('knowledgeUpload', () => {
   const tasks = ref([])
+  const fileRecords = ref([])
   const polling = ref(false)
   const consecutiveErrors = ref(0)
   const toast = useToast()
@@ -81,6 +82,10 @@ export const useKnowledgeUploadStore = defineStore('knowledgeUpload', () => {
     if (records.some((task) => taskKey(task) && !isTerminal(task.status))) {
       startPolling(true)
     }
+  }
+
+  const setFileRecords = (records) => {
+    fileRecords.value = Array.isArray(records) ? records : []
   }
 
   const nextPollDelay = () => {
@@ -174,12 +179,14 @@ export const useKnowledgeUploadStore = defineStore('knowledgeUpload', () => {
 
   return {
     tasks,
+    fileRecords,
     activeTasks,
     isSuccess,
     isFailed,
     isTerminal,
     upsertTask,
     registerUploadResult,
+    setFileRecords,
     startPolling,
     stopPolling,
     retryTask,

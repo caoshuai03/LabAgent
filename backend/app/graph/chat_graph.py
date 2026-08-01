@@ -458,6 +458,7 @@ def _build_graph() -> CompiledStateGraph:
         allowed_call_ids = set(state.get("tool_allowed_call_ids") or [])
         rejections = state.get("tool_rejections") or {}
         messages_by_call_id: dict[str, ToolMessage] = {}
+        writer = get_stream_writer()
 
         allowed_calls = [call for call in calls if str(call.get("id", "")) in allowed_call_ids]
         if allowed_calls:
@@ -465,14 +466,49 @@ def _build_graph() -> CompiledStateGraph:
             if isinstance(source_message, AIMessage):
                 filtered_message = source_message.model_copy(update={"tool_calls": allowed_calls})
                 tool_state = {**state, "messages": [*state["messages"][:-1], filtered_message]}
-                tool_result = await tool_node.ainvoke(tool_state, config=config)
-                for message in tool_result.get("messages", []):
-                    if isinstance(message, ToolMessage):
-                        messages_by_call_id[str(message.tool_call_id)] = message
+                try:
+                    async with asyncio.timeout(settings.tool_timeout_seconds):
+                        tool_result = await tool_node.ainvoke(tool_state, config=config)
+                    for message in tool_result.get("messages", []):
+                        if isinstance(message, ToolMessage):
+                            messages_by_call_id[str(message.tool_call_id)] = message
+                except TimeoutError:
+                    logger.warning(
+                        "工具执行超时: timeout_seconds=%s, tool_count=%s",
+                        settings.tool_timeout_seconds,
+                        len(allowed_calls),
+                    )
+                    for call in allowed_calls:
+                        call_id = str(call.get("id", ""))
+                        tool_name = str(call.get("name") or "unknown")
+                        message = f"{tool_name} 执行超时（超过 {settings.tool_timeout_seconds}s）"
+                        writer(
+                            {
+                                "tool_event": {
+                                    "event_type": "status",
+                                    "payload": {
+                                        "stage": "tool_timeout",
+                                        "tool_call_id": call_id,
+                                        "tool_name": tool_name,
+                                        "success": False,
+                                        "message": message,
+                                    },
+                                }
+                            }
+                        )
+                        messages_by_call_id[call_id] = ToolMessage(
+                            content=result_envelope(
+                                success=False,
+                                summary=f"{tool_name} 执行超时",
+                                error=message,
+                                error_type="timeout",
+                            ),
+                            tool_call_id=call_id,
+                            name=tool_name,
+                        )
 
         activations = list(state.get("activated_skills") or [])
         calls_by_id = {str(call.get("id", "")): call for call in calls}
-        writer = get_stream_writer()
         for call_id, message in list(messages_by_call_id.items()):
             call = calls_by_id.get(call_id, {})
             if call.get("name") != "activate_skill":

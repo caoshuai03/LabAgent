@@ -20,7 +20,13 @@ from app.repositories.kb_file_repository import KbFileRepository
 from app.repositories.kb_upload_task_repository import KbUploadTaskRepository
 from app.schemas.knowledge import KbFileVO, KbUploadTaskVO
 from app.services import document_loader, document_splitter, rag_store
+from app.services.cache_service import cache_service
 from app.services.kb_upload_queue import enqueue_kb_upload
+from app.services.knowledge_cache import (
+    KNOWLEDGE_VERSION_KEY,
+    build_knowledge_page_key,
+    invalidate_knowledge_cache,
+)
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger("labagent")
@@ -89,6 +95,7 @@ class KnowledgeService:
             )
             task = await self.task_repo.add(kb_file.id, user_id)
             await self.session.commit()
+            await invalidate_knowledge_cache()
         except Exception:
             await self.session.rollback()
             await self._safe_delete_object(url)
@@ -148,17 +155,38 @@ class KnowledgeService:
 
     async def page_query(self, file_name: str | None, page: int, page_size: int) -> PageResult[KbFileVO]:
         """分页查询文件记录。"""
+        version = await cache_service.get_version(KNOWLEDGE_VERSION_KEY)
+        cache_key = (
+            build_knowledge_page_key(version, file_name, page, page_size)
+            if version is not None
+            else None
+        )
+        if cache_key is not None:
+            cached = await cache_service.get_json(cache_key)
+            if cached is not None:
+                try:
+                    return PageResult[KbFileVO].model_validate(cached)
+                except ValueError:
+                    logger.warning("知识库分页缓存内容无效，已回源: key=%s", cache_key)
         total, files = await self.repo.page(file_name, page, page_size)
         latest_tasks = await self.task_repo.latest_by_file_ids([file.id for file in files])
-        return PageResult(
+        result = PageResult(
             total=total,
             records=[self._to_vo(file, latest_tasks.get(file.id)) for file in files],
         )
+        if cache_key is not None:
+            await cache_service.set_json(
+                cache_key,
+                result.model_dump(mode="json"),
+                settings.knowledge_cache_ttl_seconds,
+            )
+        return result
 
     async def list_active_tasks(self, user_id: int, is_admin: bool) -> list[KbUploadTaskVO]:
         """查询活动任务；管理员可见全部，普通用户仅可见本人。"""
         tasks = await self.task_repo.list_active(None if is_admin else user_id)
-        return [self._to_task_vo(task, await self.repo.get_by_id(task.kb_file_id)) for task in tasks]
+        files = await self.repo.get_by_ids([task.kb_file_id for task in tasks])
+        return [self._to_task_vo(task, files.get(task.kb_file_id)) for task in tasks]
 
     async def get_task(self, task_id: int, user_id: int, is_admin: bool) -> KbUploadTaskVO:
         """查询单个任务并校验管理员或任务所有权。"""
@@ -192,6 +220,7 @@ class KnowledgeService:
         kb_file.error_message = None
         kb_file.update_time = now
         await self.session.commit()
+        await invalidate_knowledge_cache()
 
         try:
             job_id = await enqueue_kb_upload(task.id, task.attempt_count)
@@ -210,6 +239,7 @@ class KnowledgeService:
                     kb_file.error_message = locked_task.error_message
                     kb_file.update_time = datetime.now()
                 await self.session.commit()
+                await invalidate_knowledge_cache()
             raise BusinessException(ErrorCode.OPERATION_ERROR, "任务重试入队失败，请稍后重试") from exc
 
         task.arq_job_id = job_id
@@ -274,6 +304,7 @@ class KnowledgeService:
             await self.task_repo.delete_by_id(task_id)
             await self.repo.delete_by_id(file_id)
             await self.session.commit()
+            await invalidate_knowledge_cache()
         except Exception:  # noqa: BLE001 - 继续尝试清理对象并记录巡检信息
             await self.session.rollback()
             logger.exception("未入队上传的数据库记录清理失败: task_id=%s, file_id=%s", task_id, file_id)

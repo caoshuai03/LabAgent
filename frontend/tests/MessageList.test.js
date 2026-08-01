@@ -80,4 +80,43 @@ describe('MessageList', () => {
     expect(messageList.element.scrollTop).toBe(260)
     expect(wrapper.find('.scroll-to-bottom-button').exists()).toBe(true)
   })
+
+  it('流式输出时离开底部超过阈值后停止自动置底', async () => {
+    const chatStore = useChatStore()
+    chatStore.createConversation()
+    chatStore.addMessage('assistant', '初始回答')
+
+    const wrapper = mount(MessageList, {
+      global: {
+        plugins: [pinia],
+        stubs: {
+          MessageItem: {
+            props: ['message'],
+            template: '<div>{{ message.content }}</div>',
+          },
+        },
+      },
+    })
+    const messageList = wrapper.find('.message-list')
+    setScrollMetrics(messageList.element, {
+      scrollHeight: 1200,
+      clientHeight: 400,
+      scrollTop: 800,
+    })
+    await messageList.trigger('scroll')
+
+    messageList.element.scrollTop = 798
+    await messageList.trigger('scroll')
+
+    Object.defineProperty(messageList.element, 'scrollHeight', {
+      configurable: true,
+      value: 1400,
+    })
+    chatStore.updateLastMessage('初始回答，继续输出')
+    await nextTick()
+    await nextTick()
+
+    expect(messageList.element.scrollTop).toBe(798)
+    expect(wrapper.find('.scroll-to-bottom-button').exists()).toBe(true)
+  })
 })

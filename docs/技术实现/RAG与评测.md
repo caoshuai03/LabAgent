@@ -39,6 +39,10 @@ flowchart TB
 
 上传后的解析与索引在 `backend/app/workers/kb_upload_worker.py` 执行，避免大文件处理阻塞 API。任务记录保存阶段、状态、错误和重试次数。
 
+知识库文件分页使用 Redis Cache-Aside 短缓存。缓存键包含知识库版本和查询参数摘要；
+上传、更新、删除以及 Worker 处理成功或失败后递增版本，旧缓存由 TTL 自动清理。
+活动任务和单任务状态保持直接查询，避免轮询读到过期状态。
+
 ### 2.2 解析与切分
 
 `document_loader.py` 把 PDF、Markdown 和 TXT 转为 LangChain `Document`。

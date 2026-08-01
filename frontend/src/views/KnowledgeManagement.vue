@@ -336,7 +336,7 @@ const showAdminTip = ref(false)
 let tipTimer = null
 
 // 状态
-const fileList = ref([])
+const fileList = ref([...knowledgeUploadStore.fileRecords])
 const searchKeyword = ref('')
 const selectedIds = ref([])
 const loading = ref(false)
@@ -400,7 +400,7 @@ const clearSearch = () => {
 }
 
 const fetchFileList = async () => {
-  loading.value = true
+  loading.value = fileList.value.length === 0 || Boolean(searchKeyword.value)
   try {
     const params = {}
     if (searchKeyword.value) {
@@ -411,6 +411,9 @@ const fetchFileList = async () => {
       const data = response.data.data
       // 兼容后端全量返回 records/list，以及历史可能直接返回数组的结构
       fileList.value = Array.isArray(data) ? data : data.records || data.list || []
+      if (!searchKeyword.value) {
+        knowledgeUploadStore.setFileRecords(fileList.value)
+      }
     } else {
       console.error('获取文件列表失败:', response.data.message)
       showMessage('获取文件列表失败: ' + (response.data.message || '未知错误'), 'error')

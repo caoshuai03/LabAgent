@@ -116,4 +116,39 @@ describe('MessageItem', () => {
     expect(wrapper.find('.message-skill .tool-activity-icon').exists()).toBe(true)
     expect(wrapper.find('.user-message-body .message-text').text()).toBe('分析这个空指针异常')
   })
+
+  it('引用来源超过五条时默认折叠并支持展开和收起', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'assistant-message-sources',
+          sender: 'assistant',
+          content: '回答内容',
+          sources: Array.from({ length: 7 }, (_, index) => ({
+            file_name: `source-${index + 1}.md`,
+            snippet: `引用片段 ${index + 1}`,
+          })),
+        },
+      },
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+        },
+      },
+    })
+
+    expect(wrapper.findAll('.source-item')).toHaveLength(5)
+    expect(wrapper.find('.sources-toggle').text()).toBe('')
+    expect(wrapper.find('.sources-toggle').attributes('aria-label')).toBe('展开 2 条引用')
+    expect(wrapper.find('.sources-toggle').attributes('aria-expanded')).toBe('false')
+
+    await wrapper.find('.sources-toggle').trigger('click')
+    expect(wrapper.findAll('.source-item')).toHaveLength(7)
+    expect(wrapper.find('.sources-toggle').attributes('aria-label')).toBe('收起引用')
+    expect(wrapper.find('.sources-toggle').attributes('aria-expanded')).toBe('true')
+
+    await wrapper.find('.sources-toggle').trigger('click')
+    expect(wrapper.findAll('.source-item')).toHaveLength(5)
+  })
 })

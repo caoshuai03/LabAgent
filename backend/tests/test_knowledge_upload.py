@@ -112,3 +112,38 @@ async def test_upload_enqueue_failure_cleans_database_and_object() -> None:
         "commit",
         "delete_object",
     ]
+
+
+@pytest.mark.asyncio
+async def test_active_tasks_batch_loads_related_files() -> None:
+    """活动任务应批量查询关联文件，避免按任务逐条访问数据库。"""
+    now = datetime.now()
+    tasks = [
+        SimpleNamespace(
+            id=22,
+            kb_file_id=11,
+            user_id=1,
+            status=KbUploadTaskStatus.QUEUED.value,
+            stage=KbUploadTaskStage.QUEUED.value,
+            total_chunks=None,
+            attempt_count=0,
+            error_message=None,
+            created_at=now,
+            started_at=None,
+            finished_at=None,
+            updated_at=now,
+        )
+    ]
+    kb_file = SimpleNamespace(
+        id=11,
+        file_name="course.md",
+        status=KbFileStatus.PENDING.value,
+    )
+    service = KnowledgeService.__new__(KnowledgeService)
+    service.task_repo = SimpleNamespace(list_active=AsyncMock(return_value=tasks))
+    service.repo = SimpleNamespace(get_by_ids=AsyncMock(return_value={11: kb_file}))
+
+    result = await service.list_active_tasks(user_id=1, is_admin=False)
+
+    service.repo.get_by_ids.assert_awaited_once_with([11])
+    assert result[0].file_name == "course.md"

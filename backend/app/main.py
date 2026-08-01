@@ -13,6 +13,7 @@ from app.graph.checkpointer import close_checkpointer, init_checkpointer
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
+from app.services.cache_service import cache_service
 from app.services.memory_extraction_service import memory_extraction_scheduler
 from app.services.skill_service import skill_catalog
 
@@ -23,6 +24,7 @@ logger = logging.getLogger("labagent")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动/停止钩子：初始化 Skills 与 LangGraph checkpointer。"""
+    await cache_service.initialize()
     try:
         result = await asyncio.to_thread(skill_catalog.refresh)
         logger.info(
@@ -43,6 +45,7 @@ async def lifespan(app: FastAPI):
     yield
     await memory_extraction_scheduler.close()
     await close_checkpointer()
+    await cache_service.close()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

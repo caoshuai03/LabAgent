@@ -33,7 +33,7 @@
       </div>
 
       <div class="input-editor-line">
-        <div v-if="selectedSkills.length" class="selected-skills">
+        <div v-if="selectedSkills.length" ref="selectedSkillsRef" class="selected-skills">
           <span v-for="skill in selectedSkills" :key="skill.name" class="selected-skill">
             <ToolActivityIcon :tool-name="`skill:${skill.name}`" />
             <span class="selected-skill-name">{{ skill.name }}</span>
@@ -54,6 +54,7 @@
                   : '询问实验、论文、代码或数据分析问题...'
           "
           :class="['chat-input', { 'has-scrollbar': showScrollbar }]"
+          :style="{ '--selected-skills-indent': `${selectedSkillsIndent}px` }"
           rows="1"
           @keydown="handleKeyDown"
           @input="handleInput"
@@ -216,6 +217,7 @@ const toast = useToast()
 
 const inputText = ref('')
 const inputRef = ref(null)
+const selectedSkillsRef = ref(null)
 const imageInputRef = ref(null)
 const slashMenuRef = ref(null)
 const pendingImages = ref([])
@@ -229,6 +231,7 @@ const isCompressing = ref(false)
 const isLoadingSkills = ref(false)
 const skillsLoaded = ref(false)
 const isUploadingImages = ref(false)
+const selectedSkillsIndent = ref(0)
 
 const MIN_HEIGHT = 24
 const MAX_HEIGHT = 320
@@ -285,6 +288,13 @@ const selectedSkillNames = computed(() => selectedSkills.value.map((skill) => sk
 
 // 将同一帧内的多次高度刷新合并，避免输入过程中出现抖动
 let inputVisualSyncFrameId = 0
+
+const updateSelectedSkillsIndent = () => {
+  selectedSkillsIndent.value = selectedSkillsRef.value
+    ? Math.ceil(selectedSkillsRef.value.getBoundingClientRect().width) + 6
+    : 0
+  scheduleInputVisualSync()
+}
 
 const canSend = computed(() => {
   return (
@@ -949,6 +959,10 @@ watch(showSlashMenu, (open) => {
   }
 })
 
+watch(selectedSkillNames, () => {
+  nextTick(updateSelectedSkillsIndent)
+})
+
 watch(
   () => [chatStore.isStreaming, chatStore.awaitingApproval],
   ([isStreaming, awaitingApproval]) => {
@@ -960,9 +974,12 @@ watch(
 
 onMounted(() => {
   resetInputVisualState()
+  window.addEventListener('resize', updateSelectedSkillsIndent)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', updateSelectedSkillsIndent)
+
   if (inputVisualSyncFrameId) {
     cancelAnimationFrame(inputVisualSyncFrameId)
     inputVisualSyncFrameId = 0
@@ -1095,26 +1112,30 @@ onUnmounted(() => {
 }
 
 .input-editor-line {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 6px;
+  position: relative;
   min-width: 0;
 }
 
 .selected-skills {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  max-width: calc(100% - 120px);
   min-height: 24px;
+  overflow: hidden;
 }
 
 .selected-skill {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   max-width: 220px;
   height: 24px;
+  flex-shrink: 1;
   color: var(--primary-color, #90138b);
   font-size: 14px;
   font-weight: 600;
@@ -1185,9 +1206,8 @@ onUnmounted(() => {
 }
 
 .chat-input {
-  flex: 1 1 180px;
-  width: auto;
-  min-width: 120px;
+  width: 100%;
+  min-width: 0;
   padding: 0;
   background-color: transparent;
   border: none;
@@ -1201,6 +1221,7 @@ onUnmounted(() => {
   overflow-y: hidden;
   outline: none;
   margin-bottom: 2px;
+  text-indent: var(--selected-skills-indent, 0);
   /* 放慢输入区高度变化，让长文本展开更接近大厂产品的手感 */
   transition: height 0.52s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: height;

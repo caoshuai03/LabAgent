@@ -19,8 +19,10 @@ from app.repositories.chat_session_repository import ChatSessionRepository
 from app.repositories.kb_file_repository import KbFileRepository
 from app.repositories.kb_upload_task_repository import KbUploadTaskRepository
 from app.services import document_loader, document_splitter, rag_store
+from app.services.cache_service import cache_service
 from app.services.conversation_title_service import ConversationTitleService
 from app.services.kb_upload_queue import enqueue_kb_upload
+from app.services.knowledge_cache import invalidate_knowledge_cache
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger("labagent")
@@ -116,6 +118,7 @@ async def _mark_failed(
             kb_file.error_message = message
             kb_file.update_time = now
         await session.commit()
+    await invalidate_knowledge_cache()
 
 
 async def _safe_delete_vectors(source_id: str) -> None:
@@ -152,6 +155,17 @@ async def recover_stale_tasks(_ctx: dict[str, Any]) -> None:
             continue
         except Exception:  # noqa: BLE001 - 启动恢复失败后保留 queued 状态供下次恢复
             logger.exception("知识库待处理任务恢复入队失败: task_id=%s", task_id)
+
+
+async def startup_worker(ctx: dict[str, Any]) -> None:
+    """初始化 Worker 缓存连接并恢复异常中断的任务。"""
+    await cache_service.initialize()
+    await recover_stale_tasks(ctx)
+
+
+async def shutdown_worker(_ctx: dict[str, Any]) -> None:
+    """关闭 Worker 缓存连接。"""
+    await cache_service.close()
 
 
 async def process_kb_upload(_ctx: dict[str, Any], task_id: int) -> None:
@@ -230,13 +244,15 @@ async def process_kb_upload(_ctx: dict[str, Any], task_id: int) -> None:
             kb_file.error_message = None
             kb_file.update_time = now
         await session.commit()
+    await invalidate_knowledge_cache()
 
 
 class WorkerSettings:
     """ARQ Worker 配置。"""
 
     functions = [process_kb_upload, process_conversation_title]
-    on_startup = recover_stale_tasks
+    on_startup = startup_worker
+    on_shutdown = shutdown_worker
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     queue_name = settings.arq_queue_name
     job_timeout = settings.arq_job_timeout_seconds
