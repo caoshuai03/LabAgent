@@ -26,16 +26,6 @@ class _SyncRetriever:
         raise AssertionError("不应调用异步检索接口")
 
 
-class _SlowReranker:
-    """持续等待的可控 reranker，用于验证独立超时。"""
-
-    async def acompress_documents(
-        self, documents: list[Document], query: str
-    ) -> list[Document]:
-        await asyncio.Event().wait()
-        return documents
-
-
 class _FakeVectorRetriever:
     """记录同步向量检索调用的假检索器。"""
 
@@ -106,12 +96,11 @@ async def test_retrieve_uses_sync_retriever_in_thread(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_rerank_has_independent_timeout(monkeypatch, caplog) -> None:
     """rerank 长时间不返回时应独立超时并退化为粗召回顺序。"""
+    async def _slow_rerank(*args, **kwargs):
+        await asyncio.Event().wait()
+
     monkeypatch.setattr(rag_retrieval.settings, "rag_rerank_timeout_seconds", 0.01)
-    monkeypatch.setattr(
-        rag_retrieval.LLMListwiseRerank,
-        "from_llm",
-        lambda **kwargs: _SlowReranker(),
-    )
+    monkeypatch.setattr(rag_retrieval, "_invoke_rerank_model", _slow_rerank)
     documents = [Document(page_content="平摊分析", metadata={"source": "test.pdf"})]
 
     with caplog.at_level(logging.WARNING, logger="labagent"):
@@ -119,6 +108,33 @@ async def test_rerank_has_independent_timeout(monkeypatch, caplog) -> None:
 
     assert reranked == documents
     assert "RAG rerank 超时" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_rerank_discards_invalid_and_duplicate_document_ids(
+    monkeypatch,
+    caplog,
+) -> None:
+    """模型返回越界、负数或重复 ID 时应过滤，并按原召回顺序补足结果。"""
+    async def _invalid_rerank(*args, **kwargs):
+        return rag_retrieval._RerankResult(
+            ranked_document_ids=[2, 64, 2, -1, 1],
+        )
+
+    monkeypatch.setattr(rag_retrieval.settings, "rag_rerank_top_n", 3)
+    monkeypatch.setattr(rag_retrieval, "_invoke_rerank_model", _invalid_rerank)
+    documents = [
+        Document(page_content="文档0"),
+        Document(page_content="文档1"),
+        Document(page_content="文档2"),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="labagent"):
+        reranked = await rag_retrieval.rerank("冒泡排序要求", documents)
+
+    assert [document.page_content for document in reranked] == ["文档2", "文档1", "文档0"]
+    assert "discarded_count=3" in caplog.text
+    assert "discarded_ids=[64, 2, -1]" in caplog.text
 
 
 def test_local_rerank_model_disables_reasoning_and_limits_output(monkeypatch) -> None:

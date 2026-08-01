@@ -1,7 +1,7 @@
 # @author: caoshuai.cs
-# @date: 2026-07-30
+# @date: 2026-08-02
 # @description: 实验报告写作助手在 Skill 选择界面中的展示元数据
 interface:
   display_name: "实验报告写作助手"
-  short_description: "结构化撰写实验报告，检查章节、数据、结果分析与引用完整性"
-  default_prompt: "使用 $lab-report-writer 根据实验要求和原始数据撰写一份实验报告。"
+  short_description: "检索实验资料，结构化撰写报告并生成可预览下载的文件"
+  default_prompt: "使用 $lab-report-writer 检索实验要求，根据已有材料撰写实验报告，标记待补内容并生成文件返回给我。"
