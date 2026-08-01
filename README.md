@@ -29,7 +29,7 @@ FastAPI · LangGraph · Vue 3 · PostgreSQL + pgvector · Redis + ARQ · MinIO �
 ### Docker 部署
 
 ```bash
-cp .env.example backend/.env
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -39,7 +39,7 @@ docker compose up -d --build
 1. 准备配置并启动 PostgreSQL、Redis 与 MinIO：
 
 ```bash
-cp .env.example backend/.env
+cp .env.example .env
 docker compose up -d postgres redis minio
 ```
 
