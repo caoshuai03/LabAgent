@@ -15,6 +15,7 @@ from langgraph.prebuilt import InjectedState
 from app.core.config import settings
 from app.services import rag_retrieval
 from app.services import rag_store
+from app.services.model_provider import model_provider
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 
 logger = logging.getLogger("labagent")
@@ -23,6 +24,10 @@ logger = logging.getLogger("labagent")
 _HIT_SNIPPET_MAX_LEN = 600
 _MIN_RETRIEVAL_TOP_K = 1
 _MAX_RETRIEVAL_TOP_K = 20
+
+
+class _EmbeddingModelUnavailableError(RuntimeError):
+    """Ollama Embedding 模型预检不可用。"""
 
 
 def _format_hits(documents: list) -> str:
@@ -68,6 +73,8 @@ async def search_knowledge_base(
         }
     })
     try:
+        if not await model_provider.embedding_model_available():
+            raise _EmbeddingModelUnavailableError("Ollama Embedding 模型不可用")
         current_state = state or {}
         retrieval_mode = str(current_state.get("rag_retrieval_mode") or "current")
         top_k = _resolve_top_k(current_state.get("rag_retrieval_top_k"))
@@ -127,10 +134,38 @@ async def search_knowledge_base(
         })
         return result_envelope(
             success=False,
-            output="（知识库检索超时，请基于已有信息回答或稍后重试）",
+            output="知识库检索超时。",
             summary="知识库检索超时，已降级",
             error=truncate_text(str(exc) or "知识库检索超时", 500),
             error_type="timeout",
+            duration_ms=duration_ms,
+        )
+    except _EmbeddingModelUnavailableError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        logger.warning(
+            "知识库检索已降级: model=%s, query_len=%d, cost=%dms",
+            settings.ollama_embedding_model, len(query), duration_ms,
+        )
+        message = str(exc)
+        writer({
+            "tool_event": {
+                "event_type": "status",
+                "payload": {
+                    "stage": "tool_failed",
+                    "tool_call_id": tool_call_id,
+                    "tool_name": "search_knowledge_base",
+                    "success": False,
+                    "duration_ms": duration_ms,
+                    "message": message,
+                },
+            }
+        })
+        return result_envelope(
+            success=False,
+            output="（知识库检索暂不可用，请基于已有信息回答或稍后重试）",
+            summary="知识库检索失败，已降级",
+            error=message,
+            error_type="embedding_unavailable",
             duration_ms=duration_ms,
         )
     except asyncio.CancelledError:

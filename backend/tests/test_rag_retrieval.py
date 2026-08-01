@@ -199,6 +199,11 @@ async def test_knowledge_tool_vector_only_uses_vector_retriever(monkeypatch) -> 
     monkeypatch.setattr(knowledge_tool.rag_store, "build_vector_retriever", _build_vector_retriever)
     monkeypatch.setattr(knowledge_tool.rag_retrieval, "retrieve", _unexpected_retrieve)
     monkeypatch.setattr(knowledge_tool.rag_retrieval, "rerank", _unexpected_rerank)
+    monkeypatch.setattr(
+        knowledge_tool.model_provider,
+        "embedding_model_available",
+        lambda: asyncio.sleep(0, result=True),
+    )
 
     result = await knowledge_tool.search_knowledge_base.coroutine(
         query="实验三提交要求",
@@ -220,6 +225,11 @@ async def test_knowledge_tool_logs_retrieval_exception(monkeypatch, caplog) -> N
         raise AssertionError("_async_engine not found")
 
     monkeypatch.setattr(knowledge_tool.rag_retrieval, "retrieve", _failed_retrieve)
+    monkeypatch.setattr(
+        knowledge_tool.model_provider,
+        "embedding_model_available",
+        lambda: asyncio.sleep(0, result=True),
+    )
 
     with caplog.at_level(logging.ERROR, logger="labagent"):
         result = await knowledge_tool.search_knowledge_base.coroutine(
@@ -231,3 +241,32 @@ async def test_knowledge_tool_logs_retrieval_exception(monkeypatch, caplog) -> N
     assert payload["success"] is False
     assert payload["error"] == "_async_engine not found"
     assert "知识库检索失败，已降级: query_len=4" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_knowledge_tool_degrades_before_retrieval_when_embedding_unavailable(
+    monkeypatch,
+) -> None:
+    """Embedding 预检失败时应直接降级，不再构建或调用检索器。"""
+    async def _unavailable() -> bool:
+        return False
+
+    async def _unexpected_retrieve(query: str) -> list[Document]:
+        raise AssertionError("Embedding 不可用时不应进入检索")
+
+    monkeypatch.setattr(
+        knowledge_tool.model_provider,
+        "embedding_model_available",
+        _unavailable,
+    )
+    monkeypatch.setattr(knowledge_tool.rag_retrieval, "retrieve", _unexpected_retrieve)
+
+    result = await knowledge_tool.search_knowledge_base.coroutine(
+        query="实验要求",
+        tool_call_id="test-call",
+    )
+
+    payload = json.loads(result)
+    assert payload["success"] is False
+    assert payload["error_type"] == "embedding_unavailable"
+    assert payload["summary"] == "Embedding模型不可用，知识库检索已降级"

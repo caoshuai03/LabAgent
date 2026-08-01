@@ -132,6 +132,30 @@ async def test_auto_model_uses_azure_when_ollama_model_is_unavailable(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_embedding_model_availability_checks_configured_model(monkeypatch) -> None:
+    """Embedding 预检应校验模型列表中存在当前配置的模型。"""
+    monkeypatch.setattr(settings, "ollama_base_urls", "http://ollama-a:11434")
+    provider = ModelProvider()
+    original_async_client = httpx.AsyncClient
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"models": [{"model": settings.ollama_embedding_model}]},
+        )
+
+    monkeypatch.setattr(
+        "app.services.model_provider.httpx.AsyncClient",
+        lambda *, timeout: original_async_client(
+            timeout=timeout,
+            transport=httpx.MockTransport(handle_request),
+        ),
+    )
+
+    assert await provider.embedding_model_available() is True
+
+
+@pytest.mark.asyncio
 async def test_chat_does_not_retry_other_endpoint_by_default(monkeypatch) -> None:
     """默认关闭跨节点失败重试，首次失败应直接返回异常。"""
     pool = OllamaEndpointPool(["http://ollama-a:11434", "http://ollama-b:11434"])

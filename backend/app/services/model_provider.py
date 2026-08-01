@@ -22,7 +22,7 @@ from app.services.ollama_load_balancer import (
 logger = logging.getLogger("labagent")
 
 _AUTO_MODEL = "auto"
-_AUTO_MODEL_PROBE_TIMEOUT_SECONDS = 2.0
+_OLLAMA_MODEL_PROBE_TIMEOUT_SECONDS = 2.0
 
 # 外部（OpenAI 兼容）模型清单，对齐参考项目 RagConstant.OPENAI_LLM
 _OPENAI_MODELS = {
@@ -81,11 +81,15 @@ class ModelProvider:
         logger.info("AUTO模型路由: provider=azure, model=%s", fallback_model)
         return fallback_model
 
+    async def embedding_model_available(self) -> bool:
+        """在两秒内确认至少一个 Ollama Endpoint 已加载 Embedding 模型。"""
+        return await self._ollama_model_available(settings.ollama_embedding_model)
+
     async def _ollama_model_available(self, model_name: str) -> bool:
         """在固定两秒内并发探测所有 Ollama Endpoint 的模型列表。"""
         async def probe(endpoint_url: str) -> bool:
             try:
-                async with httpx.AsyncClient(timeout=_AUTO_MODEL_PROBE_TIMEOUT_SECONDS) as client:
+                async with httpx.AsyncClient(timeout=_OLLAMA_MODEL_PROBE_TIMEOUT_SECONDS) as client:
                     response = await client.get(f"{endpoint_url}/api/tags")
                     response.raise_for_status()
                     payload = response.json()
@@ -109,7 +113,7 @@ class ModelProvider:
         try:
             for completed in asyncio.as_completed(
                 tasks,
-                timeout=_AUTO_MODEL_PROBE_TIMEOUT_SECONDS,
+                timeout=_OLLAMA_MODEL_PROBE_TIMEOUT_SECONDS,
             ):
                 if await completed:
                     return True
