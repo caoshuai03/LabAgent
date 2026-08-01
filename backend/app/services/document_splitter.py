@@ -62,6 +62,7 @@ def _parse_qa_pair(block: str) -> tuple[str, str]:
 def _split_token(documents: list[Document]) -> list[Document]:
     """普通文档按 token 计数切分，chunk_size / overlap 从 Settings 读取。"""
     splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="o200k_base",
         chunk_size=settings.rag_chunk_size,
         chunk_overlap=settings.rag_chunk_overlap,
     )
