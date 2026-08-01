@@ -1,22 +1,21 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-30 00:00
-@description: 当前用户 AGENTS.md 与长期记忆查询、编辑和删除接口
+@description: 当前用户 AGENTS.md 与 USER_PROFILE.md 长期记忆接口
 """
 import asyncio
-from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from app.core.deps import CurrentUser
 from app.core.errors import BusinessException, ErrorCode
-from app.core.response import BaseResponse, PageResult, success
+from app.core.response import BaseResponse, success
 from app.schemas.memory import (
     AgentsMemoryVO,
-    MemoryItemVO,
-    MemoryType,
+    MemorySettingsVO,
     UpdateAgentsMemoryRequest,
-    UpdateMemoryItemRequest,
+    UpdateMemorySettingsRequest,
+    UserProfileMemoryVO,
 )
 from app.services.memory_service import MemoryError, memory_service
 
@@ -47,51 +46,29 @@ async def update_agents_memory(
     return success(AgentsMemoryVO(content=content, updated_at=updated_at))
 
 
-@router.get("/items")
-async def list_memory_items(
+@router.get("/profile")
+async def get_user_profile_memory(current_user: CurrentUser) -> BaseResponse[UserProfileMemoryVO]:
+    """读取当前用户长期 USER_PROFILE.md。"""
+    content, updated_at = await asyncio.to_thread(memory_service.get_profile, current_user.id)
+    return success(UserProfileMemoryVO(content=content, updated_at=updated_at))
+
+
+@router.get("/settings")
+async def get_memory_settings(current_user: CurrentUser) -> BaseResponse[MemorySettingsVO]:
+    """读取当前用户长期记忆设置。"""
+    settings = await asyncio.to_thread(memory_service.get_settings, current_user.id)
+    return success(MemorySettingsVO.model_validate(settings))
+
+
+@router.put("/settings")
+async def update_memory_settings(
+    req: UpdateMemorySettingsRequest,
     current_user: CurrentUser,
-    memory_type: Annotated[MemoryType | None, Query()] = None,
-    page: Annotated[int, Query(ge=1)] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> BaseResponse[PageResult[MemoryItemVO]]:
-    """分页查询当前用户事实、偏好和历史经验。"""
-    items = await asyncio.to_thread(
-        memory_service.list_items,
+) -> BaseResponse[MemorySettingsVO]:
+    """更新当前用户长期记忆设置。"""
+    settings = await asyncio.to_thread(
+        memory_service.update_settings,
         current_user.id,
-        memory_type=memory_type,
+        long_term_memory_enabled=req.long_term_memory_enabled,
     )
-    start = (page - 1) * page_size
-    return success(PageResult(total=len(items), records=items[start : start + page_size]))
-
-
-@router.put("/items/{memory_id}")
-async def update_memory_item(
-    memory_id: str,
-    req: UpdateMemoryItemRequest,
-    current_user: CurrentUser,
-) -> BaseResponse[MemoryItemVO]:
-    """编辑或停用当前用户一条长期记忆。"""
-    try:
-        item = await asyncio.to_thread(
-            memory_service.update_item,
-            current_user.id,
-            memory_id,
-            title=req.title,
-            content=req.content,
-            status=req.status,
-        )
-    except MemoryError as exc:
-        raise BusinessException(ErrorCode.PARAMS_ERROR, str(exc)) from exc
-    return success(item)
-
-
-@router.delete("/items/{memory_id}")
-async def delete_memory_item(
-    memory_id: str,
-    current_user: CurrentUser,
-) -> BaseResponse[bool]:
-    """删除当前用户一条长期记忆。"""
-    deleted = await asyncio.to_thread(memory_service.delete_item, current_user.id, memory_id)
-    if not deleted:
-        raise BusinessException(ErrorCode.NOT_FOUND_ERROR, "长期记忆不存在")
-    return success(True)
+    return success(MemorySettingsVO.model_validate(settings))

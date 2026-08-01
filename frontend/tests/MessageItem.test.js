@@ -29,7 +29,7 @@ describe('MessageItem', () => {
     })
   })
 
-  it('用户消息提供右侧操作区的复制按钮', async () => {
+  it('用户消息在复制按钮左侧显示时间', async () => {
     const wrapper = mount(MessageItem, {
       props: {
         message: {
@@ -48,8 +48,10 @@ describe('MessageItem', () => {
     })
 
     const copyButton = wrapper.find('.message-actions .action-button')
+    const messageTime = wrapper.find('.message-actions .message-time')
     expect(copyButton.exists()).toBe(true)
-    expect(wrapper.find('.message-time').exists()).toBe(false)
+    expect(messageTime.text()).toBe('9:30')
+    expect(messageTime.element.nextElementSibling).toBe(copyButton.element)
 
     await copyButton.trigger('click')
     expect(writeText).toHaveBeenCalledWith('需要复制的用户消息')
@@ -90,5 +92,28 @@ describe('MessageItem', () => {
       image_url: 'blob:experiment-image',
       download_name: '实验截图.png',
     })
+  })
+
+  it('用户消息显示主动选择的技能和正文', () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'user-message-skill',
+          sender: 'user',
+          content: '分析这个空指针异常',
+          skillNames: ['java-debug-helper'],
+        },
+      },
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+        },
+      },
+    })
+
+    expect(wrapper.find('.message-skill').text()).toContain('java-debug-helper')
+    expect(wrapper.find('.message-skill .tool-activity-icon').exists()).toBe(true)
+    expect(wrapper.find('.user-message-body .message-text').text()).toBe('分析这个空指针异常')
   })
 })

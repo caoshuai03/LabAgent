@@ -64,6 +64,7 @@ export const deleteSessions = (sessionIds) => {
  * @param {string} params.message - 用户消息
  * @param {string} [params.sessionId] - 会话ID，新会话时为空
  * @param {string} [params.model] - 大模型名称
+ * @param {string[]} [params.skillNames] - 本轮主动激活的技能名称
  * @param {Object} callbacks - 回调函数集合
  * @param {Function} callbacks.onMessage - 收到消息时的回调 (data: string) => void
  * @param {Function} callbacks.onError - 发生错误时的回调 (error: Error) => void
@@ -71,10 +72,10 @@ export const deleteSessions = (sessionIds) => {
  * @returns {AbortController} 用于取消请求的控制器
  */
 export const sendReactAgentMessage = (params, callbacks) => {
-  const { message, sessionId = '', model, images = [] } = params
+  const { message, sessionId = '', model, images = [], skillNames = [] } = params
   return sendSseRequest(
     buildApiUrl('/v1/ai/react-agent'),
-    { message, session_id: sessionId, model, images },
+    { message, session_id: sessionId, model, images, skill_names: skillNames },
     callbacks,
   )
 }

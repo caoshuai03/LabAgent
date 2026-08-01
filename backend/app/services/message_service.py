@@ -33,6 +33,7 @@ class MessageService:
         sources: list[dict[str, str | float | None]] | None = None,
         reasoning: list[dict[str, str | int]] | None = None,
         images: list[dict[str, str | int]] | None = None,
+        skill_names: list[str] | None = None,
     ) -> ChatMessage:
         """持久化一条消息。"""
         message = ChatMessage(
@@ -43,6 +44,7 @@ class MessageService:
             sources=sources,
             reasoning=reasoning,
             images=images,
+            skill_names=skill_names,
         )
         return await self.repo.add(message)
 
@@ -72,6 +74,7 @@ class MessageService:
                 role=m.role,
                 content=m.content,
                 images=[ChatImageVO.model_validate(image) for image in (m.images or [])],
+                skill_names=m.skill_names or [],
                 sources=m.sources or [],
                 reasoning=m.reasoning or [],
                 tool_calls=calls_by_message.get(m.id, []),

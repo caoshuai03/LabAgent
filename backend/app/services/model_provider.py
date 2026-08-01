@@ -3,8 +3,11 @@
 @date: 2026-07-12
 @description: 模型统一适配层——按模型名路由到 ChatOllama(本地) 或 ChatOpenAI(OpenAI兼容/千帆)，统一 Runnable 接口
 """
+import asyncio
+import logging
 import uuid
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
@@ -15,6 +18,11 @@ from app.services.ollama_load_balancer import (
     LoadBalancedOllamaEmbeddings,
     OllamaEndpointPool,
 )
+
+logger = logging.getLogger("labagent")
+
+_AUTO_MODEL = "auto"
+_AUTO_MODEL_PROBE_TIMEOUT_SECONDS = 2.0
 
 # 外部（OpenAI 兼容）模型清单，对齐参考项目 RagConstant.OPENAI_LLM
 _OPENAI_MODELS = {
@@ -57,6 +65,61 @@ class ModelProvider:
         if model_name in _OPENAI_MODELS:
             return self._build_openai(model_name)
         return self._build_ollama(model_name, operation_name=operation_name)
+
+    async def resolve_chat_model_name(self, model: str | None) -> str:
+        """解析 AUTO 模型：Ollama 目标模型可用时使用本地模型，否则使用 Azure 模型。"""
+        model_name = model or settings.ollama_chat_model
+        if model_name != _AUTO_MODEL:
+            return model_name
+
+        local_model = settings.ollama_chat_model
+        if await self._ollama_model_available(local_model):
+            logger.info("AUTO模型路由: provider=ollama, model=%s", local_model)
+            return local_model
+
+        fallback_model = settings.azure_chat_model
+        logger.info("AUTO模型路由: provider=azure, model=%s", fallback_model)
+        return fallback_model
+
+    async def _ollama_model_available(self, model_name: str) -> bool:
+        """在固定两秒内并发探测所有 Ollama Endpoint 的模型列表。"""
+        async def probe(endpoint_url: str) -> bool:
+            try:
+                async with httpx.AsyncClient(timeout=_AUTO_MODEL_PROBE_TIMEOUT_SECONDS) as client:
+                    response = await client.get(f"{endpoint_url}/api/tags")
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        return False
+                    models = payload.get("models", [])
+                    if not isinstance(models, list):
+                        return False
+                    return any(
+                        isinstance(item, dict)
+                        and (item.get("name") == model_name or item.get("model") == model_name)
+                        for item in models
+                    )
+            except (httpx.HTTPError, ValueError, TypeError):
+                return False
+
+        tasks = [
+            asyncio.create_task(probe(url))
+            for url in self._ollama_endpoint_pool.endpoint_urls
+        ]
+        try:
+            for completed in asyncio.as_completed(
+                tasks,
+                timeout=_AUTO_MODEL_PROBE_TIMEOUT_SECONDS,
+            ):
+                if await completed:
+                    return True
+        except TimeoutError:
+            return False
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return False
 
     def get_fallback_model(self) -> BaseChatModel:
         """本地 Ollama 兜底模型，外部模型失败时回退。"""

@@ -11,8 +11,8 @@ LabAgent 是一个面向教学实验的 Agentic RAG 平台，围绕课程知识�
 
 - **Agentic RAG 与三级检索**：由 Agent 自主检索课程知识库，结合多级召回、重排和来源引用生成可信回答。
 - **RAGAS 评测闭环**：内置 RAG 评测流程，支持用指标结果持续观察召回、回答相关性和忠实度。
-- **Skills 扩展**：按 Agent Skills 规范加载本地 Markdown Skills，支持渐进披露、运行内激活和安全读取参考资源。
-- **Agent Memory**：支持会话上下文自动/主动压缩、用户可编辑 `AGENTS.md`，以及用户级事实、偏好和历史经验的按需检索。
+- **Skills 扩展**：按 Agent Skills 规范加载本地 Markdown Skills，支持斜杠选择、渐进披露、运行内激活和安全读取参考资源。
+- **Agent Memory**：支持会话上下文自动压缩和斜杠主动压缩、用户可编辑 `AGENTS.md`，以及可开关、自动沉淀的简洁 `USER_PROFILE.md` 长期记忆。
 - **多模型接入**：支持 Ollama 本地模型、OpenAI 兼容接口和自定义模型配置。
 - **多模态对话**：支持选择或粘贴 JPEG、PNG、WebP 图片，并将文本与图片交给视觉模型分析。
 - **沙箱隔离与工具安全**：支持受控文件工具和 Shell 工具，高风险操作需用户确认。

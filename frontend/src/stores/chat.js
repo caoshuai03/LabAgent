@@ -522,6 +522,7 @@ export const useChatStore = defineStore('chat', () => {
    * @param {string} content - 消息内容
    * @param {string} [conversationKey] - 会话 key
    * @param {Array} [images] - 图片附件及本地预览地址
+   * @param {Array<string>} [skillNames] - 用户主动选择的技能名称
    * @returns {object|null} 消息对象
    */
   const addMessage = (
@@ -529,6 +530,7 @@ export const useChatStore = defineStore('chat', () => {
     content,
     conversationKey = activeConversationKey.value,
     images = [],
+    skillNames = [],
   ) => {
     const state = ensureConversationState(conversationKey)
     if (!state) return null
@@ -538,6 +540,7 @@ export const useChatStore = defineStore('chat', () => {
       sender: sender,
       content: content,
       images,
+      skillNames,
       timestamp: new Date().toISOString(),
       toolEvents: [],
       sources: [],
@@ -773,6 +776,7 @@ export const useChatStore = defineStore('chat', () => {
           images: Array.isArray(msg.images)
             ? msg.images.map((image) => ({ ...image, preview_url: '' }))
             : [],
+          skillNames: Array.isArray(msg.skill_names) ? msg.skill_names : [],
           timestamp: msg.created_at || new Date().toISOString(),
           toolEvents,
           sources: Array.isArray(msg.sources) ? msg.sources : [],

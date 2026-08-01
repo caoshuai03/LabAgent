@@ -43,9 +43,17 @@ def _stream_response(
     user_id: int,
     model: str | None,
     images: list[ChatImageVO],
+    skill_names: list[str],
 ) -> StreamingResponse:
     """构建 SSE 流式响应。"""
-    generator = _ai_service.stream_chat(message, session_id, user_id, model, images=images)
+    generator = _ai_service.stream_chat(
+        message,
+        session_id,
+        user_id,
+        model,
+        images=images,
+        skill_names=skill_names,
+    )
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
@@ -58,6 +66,7 @@ async def agent_chat(req: ChatRequest, current_user: CurrentUser) -> StreamingRe
         current_user.id,
         req.model,
         req.images,
+        req.skill_names,
     )
 
 

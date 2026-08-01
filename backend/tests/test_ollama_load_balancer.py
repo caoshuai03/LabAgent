@@ -76,6 +76,62 @@ def test_model_provider_uses_configured_endpoint_list(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_auto_model_uses_ollama_when_target_model_exists(monkeypatch) -> None:
+    """AUTO 探测到目标模型时应使用 Ollama，并固定使用两秒超时。"""
+    monkeypatch.setattr(settings, "ollama_base_urls", "http://ollama-a:11434")
+    provider = ModelProvider()
+    original_async_client = httpx.AsyncClient
+    configured_timeouts: list[float] = []
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json={"models": [{"name": settings.ollama_chat_model}]},
+        )
+
+    def build_client(*, timeout: float) -> httpx.AsyncClient:
+        configured_timeouts.append(timeout)
+        return original_async_client(
+            timeout=timeout,
+            transport=httpx.MockTransport(handle_request),
+        )
+
+    monkeypatch.setattr(
+        "app.services.model_provider.httpx.AsyncClient",
+        build_client,
+    )
+
+    resolved_model = await provider.resolve_chat_model_name("auto")
+
+    assert resolved_model == settings.ollama_chat_model
+    assert configured_timeouts == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_auto_model_uses_azure_when_ollama_model_is_unavailable(monkeypatch) -> None:
+    """AUTO 未探测到目标模型时应回退到配置的 Azure 模型。"""
+    monkeypatch.setattr(settings, "ollama_base_urls", "http://ollama-a:11434")
+    provider = ModelProvider()
+    original_async_client = httpx.AsyncClient
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"models": [{"name": "other-model"}]})
+
+    monkeypatch.setattr(
+        "app.services.model_provider.httpx.AsyncClient",
+        lambda *, timeout: original_async_client(
+            timeout=timeout,
+            transport=httpx.MockTransport(handle_request),
+        ),
+    )
+
+    resolved_model = await provider.resolve_chat_model_name("auto")
+
+    assert resolved_model == settings.azure_chat_model
+
+
+@pytest.mark.asyncio
 async def test_chat_does_not_retry_other_endpoint_by_default(monkeypatch) -> None:
     """默认关闭跨节点失败重试，首次失败应直接返回异常。"""
     pool = OllamaEndpointPool(["http://ollama-a:11434", "http://ollama-b:11434"])

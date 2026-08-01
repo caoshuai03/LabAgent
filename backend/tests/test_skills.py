@@ -129,10 +129,13 @@ class FakeSkillModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
-        if any(isinstance(message, ToolMessage) for message in messages):
-            system_message = next(
-                message for message in messages if isinstance(message, SystemMessage)
-            )
+        system_message = next(
+            message for message in messages if isinstance(message, SystemMessage)
+        )
+        if (
+            any(isinstance(message, ToolMessage) for message in messages)
+            or "<active_skills>" in str(system_message.content)
+        ):
             self.received_system_prompt = str(system_message.content)
             response = AIMessage(content="已按 Skill 完成分析")
         else:
@@ -181,6 +184,59 @@ async def test_graph_activates_skill_and_injects_body(
         "tool_call_signatures": {},
         "activated_skills": [],
         "active_skill_run_id": "",
+    }
+    custom_events: list[dict[str, Any]] = []
+    try:
+        async for stream_mode, chunk in graph.astream(
+            graph_input,
+            config={"configurable": {"thread_id": f"1:{session_id}"}},
+            stream_mode=["updates", "custom"],
+        ):
+            if stream_mode == "custom" and isinstance(chunk, dict):
+                custom_events.append(chunk)
+    finally:
+        workspace_manager.root = original_workspace_root
+
+    assert body in model.received_system_prompt
+    assert any(
+        event.get("tool_event", {}).get("event_type") == "skill_loaded"
+        for event in custom_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_uses_preselected_skill_before_first_model_call(
+    skill_environment: Path,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """前端主动选择的 Skill 应在首次模型调用前完成注入。"""
+    body = "严格按照实验报告结构输出。"
+    _write_skill(skill_environment, "report-skill", body)
+    skill_catalog.refresh()
+    activations, _, _ = skill_service.activate("report-skill", [])
+    model = FakeSkillModel(skill_name="report-skill")
+    monkeypatch.setattr(
+        chat_graph.model_provider,
+        "get_chat_model",
+        lambda model_name=None, **kwargs: model,
+    )
+    monkeypatch.setattr(chat_graph, "get_checkpointer", lambda: InMemorySaver())
+    original_workspace_root = workspace_manager.root
+    workspace_manager.root = (tmp_path / "workspaces").resolve()
+    graph = chat_graph._build_graph()
+    session_id = str(uuid.uuid4())
+    run_id = uuid.uuid4().hex
+    graph_input = {
+        "messages": [("user", "生成实验报告")],
+        "user_id": 1,
+        "session_id": session_id,
+        "model_name": None,
+        "agent_run_id": run_id,
+        "tool_round": 0,
+        "tool_call_signatures": {},
+        "activated_skills": activations,
+        "active_skill_run_id": run_id,
     }
     custom_events: list[dict[str, Any]] = []
     try:

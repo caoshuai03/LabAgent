@@ -26,6 +26,8 @@ from app.services.conversation_title_queue import enqueue_conversation_title
 from app.services.message_service import MessageService
 from app.services.memory_extraction_service import memory_extraction_scheduler
 from app.services.session_service import SessionService
+from app.services.skill_service import SkillError, skill_service
+from app.services.model_provider import model_provider
 from app.services.tool_call_service import ToolCallService
 from app.tools.registry import tool_registry
 from app.tools.result import parse_result_envelope, redact_value, truncate_text
@@ -346,12 +348,16 @@ class AiService:
         rag_retrieval_mode: str | None = None,
         rag_retrieval_top_k: int | None = None,
         images: list[ChatImageVO] | None = None,
+        skill_names: list[str] | None = None,
     ) -> AsyncGenerator[str, None]:
         """开始新的 Agent 运行。"""
         trace_id = uuid.uuid4().hex
         is_new_session = not session_id
         requested_images = images or []
+        activations: list[dict[str, str]] = []
         try:
+            for skill_name in skill_names or []:
+                activations, _, _ = skill_service.activate(skill_name, activations)
             normalized_images = await ChatImageService().validate_images(
                 user_id,
                 requested_images,
@@ -372,11 +378,15 @@ class AiService:
                         "user",
                         message,
                         images=[image.model_dump(mode="json") for image in normalized_images],
+                        skill_names=[activation["name"] for activation in activations],
                     )
                     await db.commit()
                 except Exception:
                     await db.rollback()
                     raise
+        except SkillError as exc:
+            yield _sse_event("error", session_id or "", trace_id, {"message": str(exc)})
+            return
         except BusinessException as exc:
             yield _sse_event("error", session_id or "", trace_id, {"message": exc.message})
             return
@@ -387,6 +397,7 @@ class AiService:
 
         session_id_str = str(sid)
         yield _sse_event("session", session_id_str, trace_id, {"session_id": session_id_str})
+        resolved_model = await model_provider.resolve_chat_model_name(model)
         graph_input = {
             "messages": [HumanMessage(content=message)],
             "current_run_images": [
@@ -394,20 +405,20 @@ class AiService:
             ],
             "user_id": user_id,
             "session_id": session_id_str,
-            "model_name": model,
+            "model_name": resolved_model,
             "agent_run_id": trace_id,
             "tool_round": 0,
             "tool_call_signatures": {},
             "rag_retrieval_mode": rag_retrieval_mode or "current",
             "rag_retrieval_top_k": rag_retrieval_top_k or settings.rag_rerank_top_n,
-            "activated_skills": [],
-            "active_skill_run_id": "",
+            "activated_skills": activations,
+            "active_skill_run_id": trace_id if activations else "",
         }
         async for event in self._stream_graph(
             graph_input,
             session_id=session_id_str,
             user_id=user_id,
-            model=model,
+            model=resolved_model,
             trace_id=trace_id,
             record_trace_id=trace_id,
             title_source_message=title_message if is_new_session else None,

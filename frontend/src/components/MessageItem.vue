@@ -37,7 +37,24 @@
         </div>
 
         <div
-          v-if="message.content"
+          v-if="message.sender === 'user' && (userSkillNames.length || message.content)"
+          class="user-message-body"
+        >
+          <span v-for="skillName in userSkillNames" :key="skillName" class="message-skill">
+            <ToolActivityIcon :tool-name="`skill:${skillName}`" />
+            <span>{{ skillName }}</span>
+          </span>
+          <div
+            v-if="message.content"
+            ref="messageTextRef"
+            class="message-text"
+            v-html="formatContent(message.content)"
+            @click="handleCodeBlockClick"
+          ></div>
+        </div>
+
+        <div
+          v-else-if="message.content"
           ref="messageTextRef"
           class="message-text"
           v-html="formatContent(message.content)"
@@ -70,6 +87,9 @@
 
         <div class="message-footer">
           <div v-if="showMessageActions" class="message-actions">
+            <span v-if="message.sender === 'user' && messageTime" class="message-time">
+              {{ messageTime }}
+            </span>
             <button
               @click="handleCopy"
               :class="['action-button', { copied: copied }]"
@@ -108,6 +128,7 @@ import { escapeHtml } from '../utils/html'
 import ReasoningPanel from './ReasoningPanel.vue'
 import ToolActivityPanel from './ToolActivityPanel.vue'
 import ToolApprovalInline from './ToolApprovalInline.vue'
+import ToolActivityIcon from './icons/ToolActivityIcon.vue'
 
 const emit = defineEmits(['approval-decision'])
 
@@ -155,6 +176,10 @@ const sources = computed(() => {
 
 const messageImages = computed(() => {
   return Array.isArray(props.message.images) ? props.message.images : []
+})
+
+const userSkillNames = computed(() => {
+  return Array.isArray(props.message.skillNames) ? props.message.skillNames : []
 })
 
 const openImagePreview = (image) => {
@@ -491,8 +516,13 @@ watch(
       pointer-events: auto;
     }
 
-    .message-text {
+    .user-message-body {
       background-color: var(--user-message-bg);
+      color: var(--user-message-text);
+    }
+
+    .message-text {
+      background-color: transparent;
       color: var(--user-message-text);
       white-space: pre-wrap;
     }
@@ -546,6 +576,39 @@ watch(
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.user-message-body {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  max-width: 100%;
+  padding: 10px 16px 8px;
+  border-radius: 12px;
+}
+
+.message-skill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--primary-color, #90138b);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.6;
+
+  :deep(.tool-activity-icon) {
+    width: 17px;
+    height: 17px;
+    margin-right: 5px;
+    flex-shrink: 0;
+  }
+}
+
+.user-message-body .message-text {
+  display: inline;
+  padding: 0;
+  border-radius: 0;
 }
 
 .message-images {
@@ -605,6 +668,15 @@ watch(
 }
 
 @media (max-width: 768px) {
+  .user-message-body {
+    padding: 8px 12px 6px;
+    border-radius: 10px;
+  }
+
+  .message-skill {
+    font-size: 14px;
+  }
+
   .message-image-link {
     width: 56px;
     height: 56px;

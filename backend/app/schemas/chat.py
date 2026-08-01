@@ -27,6 +27,11 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, description="会话ID，为空时创建新会话")
     model: str | None = Field(default=None, description="大模型名称")
     images: list[ChatImageVO] = Field(default_factory=list, max_length=10, description="聊天图片")
+    skill_names: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description="本轮主动激活的 Skill 名称",
+    )
 
     @model_validator(mode="after")
     def validate_content(self) -> "ChatRequest":
@@ -66,6 +71,7 @@ class ChatMessageVO(BaseModel):
     role: str
     content: str | None
     images: list[ChatImageVO] = Field(default_factory=list)
+    skill_names: list[str] = Field(default_factory=list)
     sources: list[KbSourceVO] = Field(default_factory=list)
     reasoning: list[ChatReasoningVO] = Field(default_factory=list)
     tool_calls: list[ChatToolCallVO] = Field(default_factory=list)

@@ -42,11 +42,6 @@ class ToolRegistry:
             "execute_shell": ToolMetadata("langchain_shell", "high", False),
             "activate_skill": ToolMetadata("skill", "low", True),
             "read_skill_resource": ToolMetadata("skill", "low", True),
-            "memory_find": ToolMetadata("memory", "low", True),
-            "memory_grep": ToolMetadata("memory", "low", True),
-            "memory_read": ToolMetadata("memory", "low", True),
-            "remember_memory": ToolMetadata("memory", "medium", False),
-            "forget_memory": ToolMetadata("memory", "medium", False),
         }
 
     def all_tools(self) -> list[BaseTool]:

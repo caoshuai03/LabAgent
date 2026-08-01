@@ -32,6 +32,9 @@ class ChatMessage(Base):
     images: Mapped[list[dict[str, str | int]] | None] = mapped_column(
         JSONB, nullable=True, comment="用户消息图片附件"
     )
+    skill_names: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, comment="用户消息主动选择的Skill名称"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), comment="创建时间"
     )

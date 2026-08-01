@@ -1,7 +1,7 @@
 <!--
  @author: caoshuai.cs
  @date: 2026-07-31
- @description: LabAgent 短期上下文压缩与用户长期记忆实现参考
+ @description: LabAgent 短期上下文压缩与用户长期 Profile 实现参考
 -->
 
 # Memory
@@ -11,7 +11,7 @@
 LabAgent 将 Memory 分为：
 
 - 会话短期记忆：LangGraph checkpoint 中的消息和结构化摘要。
-- 用户长期记忆：`MEMORY_ROOT` 下按用户隔离的 Markdown 文件。
+- 用户长期记忆：`MEMORY_ROOT` 下按用户隔离的 `AGENTS.md` 与 `USER_PROFILE.md`。
 
 业务消息表仍保存完整可见历史。上下文压缩只改变后续模型工作的 checkpoint 状态，不删除用户在聊天记录中看到的原始消息。
 
@@ -52,20 +52,15 @@ LabAgent 将 Memory 分为：
 ```text
 data/memory/users/{user_id}/
 ├── AGENTS.md
-├── MEMORY_INDEX.md
-├── facts.md
-├── preferences.md
-└── experiences/
-    └── {memory_id}.md
+├── USER_PROFILE.md
+└── .meta/
+    └── extraction_state.json
 ```
 
 - `AGENTS.md`：用户手工维护的个人说明，每轮固定注入。
-- `MEMORY_INDEX.md`：事实、偏好和经验的轻量目录，每轮固定注入。
-- `facts.md`：相对稳定的用户事实。
-- `preferences.md`：交互和输出偏好。
-- `experiences/`：包含问题、解决过程、结果和可复用经验的独立记录。
+- `USER_PROFILE.md`：系统从对话中沉淀的少量稳定事实、偏好、工作方式、技术背景和项目规则。开启长期记忆时每轮固定注入；关闭后不注入、不自动更新。
 
-正文不全部固定注入；Agent 先看索引，再按需使用 Memory 工具查找和读取，控制上下文体积。
+长期记忆不再拆分 facts、preferences 和 experiences，也不暴露文件搜索工具。Profile 有固定长度上限，避免长期记忆无限增长。
 
 ## 4. 写入与管理
 
@@ -73,10 +68,10 @@ data/memory/users/{user_id}/
 
 - 初始化用户目录和默认文件。
 - 原子写入，避免进程中断留下半文件。
-- 事实、偏好和经验的结构化解析与索引重建。
-- 长度、类型、状态、ID 和相对路径校验。
-- 编辑、启用/停用和删除。
-- find、grep 和分段 read。
+- AGENTS 与 USER_PROFILE 的长度校验。
+- USER_PROFILE 敏感凭证过滤。
+- 用户级长期记忆开关。
+- 后台提取进度记录。
 
 普通 API：
 
@@ -84,29 +79,29 @@ data/memory/users/{user_id}/
 |---|---|
 | `GET /memory/agents` | 读取当前用户 `AGENTS.md` |
 | `PUT /memory/agents` | 更新当前用户 `AGENTS.md` |
-| `GET /memory/items` | 分页查询事实、偏好和经验 |
-| `PUT /memory/items/{memory_id}` | 编辑内容或状态 |
-| `DELETE /memory/items/{memory_id}` | 删除一条记忆 |
+| `GET /memory/profile` | 只读查看当前用户 `USER_PROFILE.md` |
+| `GET /memory/settings` | 读取当前用户长期记忆开关 |
+| `PUT /memory/settings` | 更新当前用户长期记忆开关 |
 
-Agent 工具包括 `memory_find`、`memory_grep`、`memory_read`、`remember_memory` 和 `forget_memory`。所有操作只作用于 JWT 用户对应目录。
+Agent 不再注册 `memory_find`、`memory_grep`、`memory_read`、`remember_memory` 和 `forget_memory`。长期记忆通过系统上下文固定注入。
 
 ## 5. 自动提取
 
 一次 Agent 回答成功完成后，`MemoryExtractionScheduler` 按用户和会话调度空闲后台任务：
 
-1. 读取尚未处理的新业务消息。
-2. 用结构化模型输出提取事实、偏好和可复用经验。
-3. 允许返回空结果，禁止为了“有记忆”强行提取。
-4. 根据来源消息、标题和内容去重后写入。
-5. 更新处理进度，避免重复扫描全部历史。
+1. 先检查用户级 `long_term_memory_enabled`，关闭时直接跳过。
+2. 读取尚未处理的新业务消息。
+3. 读取当前 `USER_PROFILE.md`。
+4. 用结构化模型输出更新后的 `USER_PROFILE.md`。
+5. 允许保持不变，禁止为了“有记忆”强行新增内容。
+6. 更新处理进度，避免重复扫描全部历史。
 
-自动提取只写事实、偏好和经验，不修改用户 `AGENTS.md`。任务失败记录日志但不影响已完成的对话响应；应用退出时等待或关闭调度任务。
+自动提取只更新 `USER_PROFILE.md`，不修改用户 `AGENTS.md`，也不提供手动编辑 `USER_PROFILE.md` 的接口。任务失败记录日志但不影响已完成的对话响应；应用退出时等待或关闭调度任务。
 
 ## 6. 安全与隐私
 
 - 用户 ID 只能来自认证上下文。
-- 路径不接受任意绝对地址、`..` 或符号链接越界。
-- 文件、单项内容、搜索词和读取行数均有限制。
+- Profile 长度有限制，且拒绝明显凭证。
 - 日志只记录用户 ID、会话 ID 和数量，不输出完整私人记忆。
 - 长期记忆进入 Prompt 前被标记为用户上下文，不能覆盖系统规则和工具权限。
 - 自动提取应避免保存密码、Token、API Key 和无长期价值的临时信息。
@@ -117,9 +112,9 @@ Agent 工具包括 `memory_find`、`memory_grep`、`memory_read`、`remember_mem
 |---|---|
 | `services/context_token_counter.py` | 上下文 token 估算 |
 | `services/conversation_compaction_service.py` | 摘要与消息裁剪 |
-| `services/memory_service.py` | Markdown 长期记忆 |
-| `services/memory_extraction_service.py` | 后台结构化提取 |
-| `tools/memory_tools.py` | Agent 记忆工具 |
+| `services/memory_service.py` | AGENTS 与 USER_PROFILE 存储 |
+| `services/memory_extraction_service.py` | 后台 Profile 更新 |
+| `tools/memory_tools.py` | 保留空工具列表，Memory 采用固定注入 |
 | `api/v1/memory.py` | 管理 API |
 | `views/MemoryManagement.vue` | 用户管理页 |
 

@@ -1,7 +1,7 @@
 <!--
  @author: caoshuai.cs
  @date: 2026-07-30 00:00
- @description: 用户 AGENTS.md 与事实、偏好、历史经验长期记忆管理页面
+ @description: 用户 AGENTS.md 与 USER_PROFILE.md 长期记忆管理页面
 -->
 <template>
   <div class="memory-page">
@@ -14,12 +14,12 @@
       </header>
 
       <div class="memory-layout">
-        <section class="agents-panel">
-          <div class="section-heading agents-heading">
+        <section class="memory-panel">
+          <div class="section-heading">
             <div>
               <h2>AGENTS.md</h2>
             </div>
-            <div class="agents-actions">
+            <div class="editor-actions">
               <button
                 class="text-button"
                 :disabled="agentsSaving || agentsContent === savedAgentsContent"
@@ -38,67 +38,35 @@
           </div>
           <textarea
             v-model="agentsContent"
-            class="agents-editor"
+            class="memory-editor"
             spellcheck="false"
             aria-label="编辑我的 AGENTS.md"
           ></textarea>
         </section>
 
-        <section class="items-panel">
-          <div class="section-heading items-heading">
+        <section class="memory-panel profile-panel">
+          <div class="section-heading">
             <div>
-              <h2>记忆</h2>
-              <p>从对话中保留的事实、偏好和经验，可随时编辑、停用或删除。</p>
+              <h2>USER_PROFILE.md</h2>
+              <p>由系统从对话中自动沉淀，开启长期记忆后会固定注入后续对话。</p>
             </div>
-            <select v-model="activeType" class="type-filter" @change="loadItems">
-              <option value="">全部</option>
-              <option value="fact">用户事实</option>
-              <option value="preference">用户偏好</option>
-              <option value="experience">历史经验</option>
-            </select>
-          </div>
-
-          <div v-if="loading" class="state-text">加载中...</div>
-          <div v-else-if="items.length === 0" class="state-text">暂无记忆</div>
-          <div v-else class="memory-list">
-            <article v-for="item in items" :key="item.memory_id" class="memory-card">
-              <div class="card-header">
-                <span class="memory-type">{{ typeLabel(item.memory_type) }}</span>
-                <span v-if="item.status === 'disabled'" class="disabled-tag">已停用</span>
-              </div>
+            <label class="memory-switch">
               <input
-                v-if="editingId === item.memory_id"
-                v-model="editTitle"
-                class="edit-title"
-                maxlength="200"
+                v-model="longTermMemoryEnabled"
+                type="checkbox"
+                :disabled="settingsSaving"
+                @change="saveSettings"
               />
-              <h3 v-else>{{ item.title }}</h3>
-              <textarea
-                v-if="editingId === item.memory_id"
-                v-model="editContent"
-                class="edit-content"
-                maxlength="8000"
-              ></textarea>
-              <p v-else class="memory-content">{{ item.content }}</p>
-              <div class="card-meta">
-                <span>{{ formatTime(item.updated_at) }}</span>
-                <span v-if="item.source_session_id">来源会话可追溯</span>
-              </div>
-              <div class="card-actions">
-                <template v-if="editingId === item.memory_id">
-                  <button class="text-button" @click="cancelEdit">取消</button>
-                  <button class="primary-button small" @click="saveItem(item)">保存</button>
-                </template>
-                <template v-else>
-                  <button class="text-button" @click="startEdit(item)">编辑</button>
-                  <button class="text-button" @click="toggleItem(item)">
-                    {{ item.status === 'active' ? '停用' : '启用' }}
-                  </button>
-                  <button class="text-button danger" @click="removeItem(item)">删除</button>
-                </template>
-              </div>
-            </article>
+              <span>{{ longTermMemoryEnabled ? '长期记忆已开启' : '长期记忆已关闭' }}</span>
+            </label>
           </div>
+          <textarea
+            v-model="profileContent"
+            class="memory-editor profile-editor"
+            spellcheck="false"
+            readonly
+            aria-label="查看我的 USER_PROFILE.md"
+          ></textarea>
         </section>
       </div>
     </main>
@@ -109,42 +77,25 @@
 import { onMounted, ref } from 'vue'
 import Sidebar from '../components/Sidebar.vue'
 import { useChatStore } from '../stores/chat'
-import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 import {
-  deleteMemoryItem,
   getAgentsMemory,
-  getMemoryItems,
+  getMemorySettings,
+  getUserProfileMemory,
   updateAgentsMemory,
-  updateMemoryItem,
+  updateMemorySettings,
 } from '../api/memory'
 
 defineOptions({ name: 'MemoryManagement' })
 
 const chatStore = useChatStore()
-const { confirm } = useConfirm()
 const toast = useToast()
 const agentsContent = ref('')
 const savedAgentsContent = ref('')
 const agentsSaving = ref(false)
-const items = ref([])
-const loading = ref(false)
-const activeType = ref('')
-const editingId = ref('')
-const editTitle = ref('')
-const editContent = ref('')
-
-const typeLabel = (type) =>
-  ({
-    fact: '用户事实',
-    preference: '用户偏好',
-    experience: '历史经验',
-  })[type] || type
-
-const formatTime = (value) => {
-  if (!value) return ''
-  return new Date(value).toLocaleString('zh-CN')
-}
+const profileContent = ref('')
+const longTermMemoryEnabled = ref(true)
+const settingsSaving = ref(false)
 
 const loadAgents = async () => {
   try {
@@ -176,78 +127,45 @@ const cancelAgentsEdit = () => {
   agentsContent.value = savedAgentsContent.value
 }
 
-const loadItems = async () => {
-  loading.value = true
+const loadProfile = async () => {
   try {
-    const params = { page: 1, page_size: 100 }
-    if (activeType.value) params.memory_type = activeType.value
-    const response = await getMemoryItems(params)
-    items.value = response.data.data?.records || []
+    const response = await getUserProfileMemory()
+    const content = response.data.data?.content ?? ''
+    profileContent.value = content
   } catch (error) {
-    toast.error(error.response?.data?.message || '加载长期记忆失败')
+    toast.error(error.response?.data?.message || '加载 USER_PROFILE.md 失败')
+  }
+}
+
+const loadSettings = async () => {
+  try {
+    const response = await getMemorySettings()
+    longTermMemoryEnabled.value = response.data.data?.long_term_memory_enabled ?? true
+  } catch (error) {
+    toast.error(error.response?.data?.message || '加载长期记忆设置失败')
+  }
+}
+
+const saveSettings = async () => {
+  settingsSaving.value = true
+  const nextValue = longTermMemoryEnabled.value
+  try {
+    const response = await updateMemorySettings(nextValue)
+    longTermMemoryEnabled.value = response.data.data?.long_term_memory_enabled ?? nextValue
+    toast.success(longTermMemoryEnabled.value ? '长期记忆已开启' : '长期记忆已关闭')
+  } catch (error) {
+    longTermMemoryEnabled.value = !nextValue
+    toast.error(error.response?.data?.message || '保存长期记忆设置失败')
   } finally {
-    loading.value = false
-  }
-}
-
-const startEdit = (item) => {
-  editingId.value = item.memory_id
-  editTitle.value = item.title
-  editContent.value = item.content
-}
-
-const cancelEdit = () => {
-  editingId.value = ''
-}
-
-const saveItem = async (item) => {
-  try {
-    await updateMemoryItem(item.memory_id, {
-      title: editTitle.value,
-      content: editContent.value,
-    })
-    editingId.value = ''
-    await loadItems()
-    toast.success('长期记忆已更新')
-  } catch (error) {
-    toast.error(error.response?.data?.message || '更新长期记忆失败')
-  }
-}
-
-const toggleItem = async (item) => {
-  try {
-    await updateMemoryItem(item.memory_id, {
-      status: item.status === 'active' ? 'disabled' : 'active',
-    })
-    await loadItems()
-  } catch (error) {
-    toast.error(error.response?.data?.message || '更新记忆状态失败')
-  }
-}
-
-const removeItem = async (item) => {
-  const confirmed = await confirm({
-    title: '删除记忆',
-    message: `确定要删除“${item.title}”吗？`,
-    description: '删除后，这条记忆将无法恢复。',
-    confirm_text: '确认删除',
-    tone: 'danger',
-  })
-  if (!confirmed) return
-
-  try {
-    await deleteMemoryItem(item.memory_id)
-    await loadItems()
-    toast.success('长期记忆已删除')
-  } catch (error) {
-    toast.error(error.response?.data?.message || '删除长期记忆失败')
+    settingsSaving.value = false
   }
 }
 
 onMounted(() => {
   chatStore.initialize()
   loadAgents()
-  loadItems()
+  loadProfile()
+  loadSettings()
 })
 </script>
 
@@ -288,12 +206,11 @@ onMounted(() => {
   margin: 0 auto;
 }
 
-.agents-panel,
-.items-panel {
+.memory-panel {
   min-width: 0;
 }
 
-.items-panel {
+.profile-panel {
   padding-top: 44px;
   border-top: 1px solid var(--border-color);
 }
@@ -321,19 +238,15 @@ onMounted(() => {
   }
 }
 
-.agents-heading h2 {
-  margin-bottom: 0;
-}
-
-.agents-actions {
+.editor-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.agents-editor {
+.memory-editor {
   width: 100%;
-  min-height: 460px;
+  min-height: 420px;
   padding: 20px 22px;
   resize: vertical;
   border: 1px solid var(--border-color);
@@ -355,6 +268,26 @@ onMounted(() => {
   &:focus {
     border-color: rgba(144, 19, 139, 0.5);
     box-shadow: 0 0 0 3px rgba(144, 19, 139, 0.07);
+  }
+}
+
+.profile-editor {
+  min-height: 360px;
+  color: var(--text-secondary);
+}
+
+.memory-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+
+  input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary-color);
   }
 }
 
@@ -383,79 +316,6 @@ onMounted(() => {
     opacity: 0.5;
     cursor: not-allowed;
   }
-
-  &.small {
-    padding: 6px 12px;
-  }
-}
-
-.type-filter {
-  height: 34px;
-  padding: 0 30px 0 11px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.memory-list {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--border-color);
-}
-
-.memory-card {
-  padding: 20px 2px;
-  border-bottom: 1px solid var(--border-color);
-
-  h3 {
-    margin: 10px 0 7px;
-    color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 600;
-  }
-}
-
-.card-header,
-.card-meta,
-.card-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.memory-type,
-.disabled-tag {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(144, 19, 139, 0.08);
-  color: var(--primary-color);
-  font-size: 11px;
-}
-
-.disabled-tag {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
-.memory-content {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.65;
-  white-space: pre-wrap;
-}
-
-.card-meta {
-  margin-top: 10px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.card-actions {
-  justify-content: flex-end;
-  margin-top: 8px;
 }
 
 .text-button {
@@ -478,39 +338,6 @@ onMounted(() => {
     background: transparent;
     color: var(--text-secondary);
   }
-
-  &.danger {
-    color: #dc2626;
-  }
-}
-
-.edit-title,
-.edit-content {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  outline: none;
-
-  &:focus {
-    border-color: rgba(144, 19, 139, 0.5);
-  }
-}
-
-.edit-content {
-  min-height: 140px;
-  margin-top: 8px;
-  resize: vertical;
-}
-
-.state-text {
-  padding: 56px 0;
-  border-top: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-align: center;
 }
 
 @media (max-width: 900px) {
@@ -522,7 +349,7 @@ onMounted(() => {
     margin-bottom: 34px;
   }
 
-  .agents-editor {
+  .memory-editor {
     min-height: 400px;
   }
 }
@@ -546,24 +373,17 @@ onMounted(() => {
 
   .section-heading {
     align-items: flex-start;
+    flex-direction: column;
     gap: 16px;
   }
 
-  .agents-editor {
+  .memory-editor {
     min-height: 340px;
     padding: 16px;
   }
 
-  .items-panel {
+  .profile-panel {
     padding-top: 36px;
-  }
-
-  .items-heading {
-    flex-direction: column;
-  }
-
-  .type-filter {
-    width: 100%;
   }
 }
 </style>

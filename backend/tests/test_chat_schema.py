@@ -30,6 +30,20 @@ def test_chat_message_sources_allow_missing_score() -> None:
     assert message.sources[0].score is None
 
 
+def test_chat_message_supports_selected_skills() -> None:
+    """历史用户消息应返回主动选择的Skill名称。"""
+    message = ChatMessageVO(
+        id=1,
+        session_id="00000000-0000-0000-0000-000000000001",
+        role="user",
+        content="分析异常",
+        skill_names=["java-debug-helper"],
+        created_at=datetime(2026, 8, 1, 0, 0, 0),
+    )
+
+    assert message.skill_names == ["java-debug-helper"]
+
+
 def test_chat_request_requires_text_or_image() -> None:
     """聊天请求必须包含文本或图片。"""
     with pytest.raises(ValueError):
@@ -63,3 +77,15 @@ def test_chat_request_allows_up_to_ten_images() -> None:
     assert len(ChatRequest(message="", images=[image] * 10).images) == 10
     with pytest.raises(ValueError):
         ChatRequest(message="", images=[image] * 11)
+
+
+def test_chat_request_allows_up_to_three_skills() -> None:
+    """单轮最多允许主动选择三个 Skill。"""
+    request = ChatRequest(
+        message="分析异常",
+        skill_names=["java-debug-helper", "lab-report-writer"],
+    )
+
+    assert request.skill_names == ["java-debug-helper", "lab-report-writer"]
+    with pytest.raises(ValueError):
+        ChatRequest(message="分析异常", skill_names=["a", "b", "c", "d"])

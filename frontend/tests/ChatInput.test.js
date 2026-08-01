@@ -3,20 +3,32 @@
  * @date: 2026-07-15 03:30
  * @description: 聊天输入框停止生成功能测试
  */
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatInput from '../src/components/ChatInput.vue'
 import { useChatStore } from '../src/stores/chat'
-import { cancelReactAgent, sendReactAgentMessage, uploadChatImage } from '../src/api/chat'
+import {
+  cancelReactAgent,
+  compressConversation,
+  sendReactAgentMessage,
+  uploadChatImage,
+} from '../src/api/chat'
+import { getSkills } from '../src/api/skills'
 
 vi.mock('../src/api/chat', () => ({
   cancelReactAgent: vi.fn(() => Promise.resolve({ data: { data: true } })),
+  compressConversation: vi.fn(),
+  getSessionTitle: vi.fn(),
   getUserSessions: vi.fn(() => Promise.resolve({ data: { data: [] } })),
   resumeReactAgent: vi.fn(),
   sendReactAgentMessage: vi.fn(),
   uploadChatImage: vi.fn(),
+}))
+
+vi.mock('../src/api/skills', () => ({
+  getSkills: vi.fn(),
 }))
 
 describe('ChatInput', () => {
@@ -151,5 +163,141 @@ describe('ChatInput', () => {
 
     expect(wrapper.findAll('.pending-image')).toHaveLength(1)
     expect(URL.createObjectURL).toHaveBeenCalledWith(file)
+  })
+
+  it('第一次回车选择技能，输入任务后再次回车才发送', async () => {
+    getSkills.mockResolvedValue({
+      data: {
+        data: [
+          {
+            name: 'java-debug-helper',
+            description: '分析 Java 异常并给出排查建议',
+          },
+        ],
+      },
+    })
+    sendReactAgentMessage.mockReturnValue({ abort: vi.fn() })
+    const chatStore = useChatStore()
+    chatStore.createConversation()
+    const wrapper = mount(ChatInput, {
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+          clickOutside: () => {},
+        },
+      },
+    })
+
+    await wrapper.find('textarea').setValue('已有问题 /')
+    await flushPromises()
+    expect(getSkills).toHaveBeenCalledOnce()
+    expect(wrapper.find('.slash-command-menu').exists()).toBe(true)
+    expect(wrapper.find('.compact-button').exists()).toBe(false)
+    expect(wrapper.find('.send-button').classes()).toContain('disabled-btn')
+
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
+
+    expect(sendReactAgentMessage).not.toHaveBeenCalled()
+    expect(wrapper.find('.selected-skill').text()).toContain('java-debug-helper')
+    expect(wrapper.find('.selected-skill .tool-activity-icon').exists()).toBe(true)
+    expect(wrapper.find('.input-editor-line').element.lastElementChild.tagName).toBe('TEXTAREA')
+    expect(wrapper.find('textarea').element.value).toBe('已有问题')
+
+    await wrapper.find('textarea').setValue('已有问题，分析这个空指针异常')
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
+
+    expect(sendReactAgentMessage.mock.calls[0][0]).toMatchObject({
+      message: '已有问题，分析这个空指针异常',
+      skillNames: ['java-debug-helper'],
+    })
+    expect(chatStore.messages[0].skillNames).toEqual(['java-debug-helper'])
+  })
+
+  it('只有输入开头或空白字符后的斜杠才打开命令菜单', async () => {
+    getSkills.mockResolvedValue({ data: { data: [] } })
+    const chatStore = useChatStore()
+    chatStore.createConversation()
+    const wrapper = mount(ChatInput, {
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+          clickOutside: () => {},
+        },
+      },
+    })
+
+    await wrapper.find('textarea').setValue('dha./')
+    await flushPromises()
+    expect(wrapper.find('.slash-command-menu').exists()).toBe(false)
+
+    await wrapper.find('textarea').setValue('dha. /')
+    await flushPromises()
+    expect(wrapper.find('.slash-command-menu').exists()).toBe(true)
+  })
+
+  it('从斜杠菜单选择压缩会调用现有主动压缩接口', async () => {
+    getSkills.mockResolvedValue({ data: { data: [] } })
+    compressConversation.mockResolvedValue({
+      data: {
+        data: {
+          compressed: false,
+          before_tokens: 10,
+          after_tokens: 10,
+        },
+      },
+    })
+    const chatStore = useChatStore()
+    const draftKey = chatStore.createConversation()
+    const sessionId = '00000000-0000-0000-0000-000000000001'
+    chatStore.setCurrentSessionId(sessionId, draftKey)
+    const wrapper = mount(ChatInput, {
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+          clickOutside: () => {},
+        },
+      },
+    })
+
+    await wrapper.find('textarea').setValue('/')
+    await flushPromises()
+    const compressButton = wrapper
+      .findAll('.menu-item')
+      .find((button) => button.text().includes('压缩上下文'))
+    await compressButton.trigger('click')
+    await flushPromises()
+
+    expect(compressConversation).toHaveBeenCalledWith(sessionId)
+    expect(wrapper.find('textarea').element.value).toBe('')
+  })
+
+  it('技能加载期间按回车不会把斜杠作为普通消息发送', async () => {
+    let resolveSkills
+    getSkills.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSkills = resolve
+      }),
+    )
+    const chatStore = useChatStore()
+    chatStore.createConversation()
+    const wrapper = mount(ChatInput, {
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+          clickOutside: () => {},
+        },
+      },
+    })
+
+    await wrapper.find('textarea').setValue('/')
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
+
+    expect(sendReactAgentMessage).not.toHaveBeenCalled()
+    resolveSkills({ data: { data: [] } })
+    await flushPromises()
   })
 })

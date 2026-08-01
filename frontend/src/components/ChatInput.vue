@@ -1,6 +1,19 @@
 <template>
   <div class="chat-input-container">
     <div class="input-wrapper" :class="{ expanded: isExpanded }">
+      <SlashCommandMenu
+        ref="slashMenuRef"
+        :open="showSlashMenu"
+        :query="slashQuery || ''"
+        :skills="skillSummaries"
+        :selected-skill-names="selectedSkillNames"
+        :can-compress="canCompress"
+        :is-compressing="isCompressing"
+        :loading-skills="isLoadingSkills"
+        @select="handleSlashCommandSelect"
+        @close="closeSlashMenu"
+      />
+
       <div v-if="pendingImages.length" class="pending-images">
         <div
           v-for="(image, index) in pendingImages"
@@ -19,23 +32,34 @@
         </div>
       </div>
 
-      <textarea
-        ref="inputRef"
-        v-model="inputText"
-        :disabled="chatStore.isStreaming || chatStore.awaitingApproval"
-        :placeholder="
-          chatStore.awaitingApproval
-            ? '请先处理工具确认'
-            : chatStore.isStreaming
-              ? 'AI 正在回复...'
-              : '询问实验、论文、代码或数据分析问题...'
-        "
-        :class="['chat-input', { 'has-scrollbar': showScrollbar }]"
-        rows="1"
-        @keydown="handleKeyDown"
-        @input="handleInput"
-        @paste="handlePaste"
-      ></textarea>
+      <div class="input-editor-line">
+        <div v-if="selectedSkills.length" class="selected-skills">
+          <span v-for="skill in selectedSkills" :key="skill.name" class="selected-skill">
+            <ToolActivityIcon :tool-name="`skill:${skill.name}`" />
+            <span class="selected-skill-name">{{ skill.name }}</span>
+          </span>
+        </div>
+
+        <textarea
+          ref="inputRef"
+          v-model="inputText"
+          :disabled="chatStore.isStreaming || chatStore.awaitingApproval"
+          :placeholder="
+            chatStore.awaitingApproval
+              ? '请先处理工具确认'
+              : chatStore.isStreaming
+                ? 'AI 正在回复...'
+                : selectedSkills.length
+                  ? '输入任务...'
+                  : '询问实验、论文、代码或数据分析问题...'
+          "
+          :class="['chat-input', { 'has-scrollbar': showScrollbar }]"
+          rows="1"
+          @keydown="handleKeyDown"
+          @input="handleInput"
+          @paste="handlePaste"
+        ></textarea>
+      </div>
 
       <div class="input-footer">
         <div class="input-left-actions">
@@ -71,31 +95,6 @@
             multiple
             @change="handleImageSelection"
           />
-
-          <button
-            type="button"
-            class="action-button compact-button"
-            :class="{ 'disabled-btn': !canCompress }"
-            :disabled="!canCompress"
-            v-tooltip="isCompressing ? '正在压缩上下文' : '压缩上下文'"
-            aria-label="压缩上下文"
-            @click="handleCompress"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M8 3v5H3"></path>
-              <path d="M16 3v5h5"></path>
-              <path d="M8 21v-5H3"></path>
-              <path d="M16 21v-5h5"></path>
-            </svg>
-          </button>
         </div>
 
         <div class="input-actions">
@@ -125,7 +124,10 @@
                   :class="{ active: chatStore.selectedModel === model.value }"
                   @click="selectModel(model.value)"
                 >
-                  <span class="model-option-label">{{ model.label }}</span>
+                  <span class="model-option-content">
+                    <ModelIcon :name="model.icon" />
+                    <span class="model-option-label">{{ model.label }}</span>
+                  </span>
                   <svg
                     v-if="chatStore.selectedModel === model.value"
                     class="model-option-check"
@@ -201,8 +203,12 @@ import {
   sendReactAgentMessage,
   uploadChatImage,
 } from '../api/chat'
+import { getSkills } from '../api/skills'
 import { AVAILABLE_MODELS } from '../constants/models'
 import ChevronDownIcon from './icons/ChevronDownIcon.vue'
+import ModelIcon from './icons/ModelIcon.vue'
+import SlashCommandMenu from './SlashCommandMenu.vue'
+import ToolActivityIcon from './icons/ToolActivityIcon.vue'
 import { useToast } from '../composables/useToast'
 
 const chatStore = useChatStore()
@@ -211,11 +217,17 @@ const toast = useToast()
 const inputText = ref('')
 const inputRef = ref(null)
 const imageInputRef = ref(null)
+const slashMenuRef = ref(null)
 const pendingImages = ref([])
+const skillSummaries = ref([])
+const selectedSkills = ref([])
 const showScrollbar = ref(false)
 const isExpanded = ref(false)
 const showModelDropdown = ref(false)
+const slashMenuDismissed = ref(false)
 const isCompressing = ref(false)
+const isLoadingSkills = ref(false)
+const skillsLoaded = ref(false)
 const isUploadingImages = ref(false)
 
 const MIN_HEIGHT = 24
@@ -224,6 +236,7 @@ const EXPAND_TRIGGER_HEIGHT = 84
 const COLLAPSE_TRIGGER_HEIGHT = 56
 const MAX_IMAGE_COUNT = 10
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+const MAX_SELECTED_SKILLS = 3
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const TOOL_FAILURE_STAGES = new Set([
   'tool_failed',
@@ -236,10 +249,39 @@ const TITLE_POLL_MAX_ATTEMPTS = 65
 
 const availableModels = AVAILABLE_MODELS
 
-const currentModelLabel = computed(() => {
-  const model = availableModels.find((item) => item.value === chatStore.selectedModel)
-  return model ? model.label : chatStore.selectedModel
+const currentModel = computed(() => {
+  return (
+    availableModels.find((item) => item.value === chatStore.selectedModel) ||
+    availableModels[0]
+  )
 })
+
+const currentModelLabel = computed(() => {
+  return currentModel.value.label
+})
+
+const slashCommandMatch = computed(() => {
+  const match = inputText.value.match(/(?:^|\s)\/([^\s/]*)$/)
+  if (!match) return null
+  const leadingWhitespaceLength = match[0].startsWith('/') ? 0 : 1
+  return {
+    query: match[1],
+    start: inputText.value.length - match[0].length + leadingWhitespaceLength,
+  }
+})
+
+const slashQuery = computed(() => slashCommandMatch.value?.query ?? null)
+
+const showSlashMenu = computed(() => {
+  return (
+    slashQuery.value !== null &&
+    !slashMenuDismissed.value &&
+    !chatStore.isStreaming &&
+    !chatStore.awaitingApproval
+  )
+})
+
+const selectedSkillNames = computed(() => selectedSkills.value.map((skill) => skill.name))
 
 // 将同一帧内的多次高度刷新合并，避免输入过程中出现抖动
 let inputVisualSyncFrameId = 0
@@ -249,6 +291,7 @@ const canSend = computed(() => {
     (inputText.value.trim().length > 0 || pendingImages.value.length > 0) &&
     !chatStore.isStreaming &&
     !chatStore.awaitingApproval &&
+    !showSlashMenu.value &&
     !isUploadingImages.value
   )
 })
@@ -336,8 +379,56 @@ const handleCompress = async () => {
   }
 }
 
+const loadSkills = async () => {
+  if (skillsLoaded.value || isLoadingSkills.value) return
+  isLoadingSkills.value = true
+  try {
+    const response = await getSkills()
+    skillSummaries.value = response.data.data || []
+    skillsLoaded.value = true
+  } catch (error) {
+    toast.error(error.response?.data?.message || '加载技能失败')
+  } finally {
+    isLoadingSkills.value = false
+  }
+}
+
+const closeSlashMenu = () => {
+  slashMenuDismissed.value = true
+}
+
+const removeSlashCommand = () => {
+  if (!slashCommandMatch.value) return
+  inputText.value = inputText.value.slice(0, slashCommandMatch.value.start).trimEnd()
+}
+
+const handleSlashCommandSelect = async (item) => {
+  if (item.type === 'compress') {
+    removeSlashCommand()
+    slashMenuDismissed.value = true
+    scheduleInputVisualSync()
+    await handleCompress()
+    inputRef.value?.focus()
+    return
+  }
+
+  if (item.type !== 'skill' || !item.skill) return
+  if (selectedSkills.value.length >= MAX_SELECTED_SKILLS) {
+    toast.info(`单次最多选择 ${MAX_SELECTED_SKILLS} 个技能`)
+    return
+  }
+  if (!selectedSkillNames.value.includes(item.skill.name)) {
+    selectedSkills.value.push(item.skill)
+  }
+  removeSlashCommand()
+  slashMenuDismissed.value = true
+  scheduleInputVisualSync()
+  inputRef.value?.focus()
+}
+
 const toggleModelDropdown = () => {
   if (chatStore.isStreaming || chatStore.awaitingApproval) return
+  closeSlashMenu()
   showModelDropdown.value = !showModelDropdown.value
 }
 
@@ -584,6 +675,8 @@ const syncInputVisualState = () => {
 }
 
 const handleInput = () => {
+  slashMenuDismissed.value = false
+  closeModelDropdown()
   scheduleInputVisualSync()
 }
 
@@ -591,6 +684,13 @@ const handleKeyDown = (event) => {
   // 输入法（IME）组字过程中的回车用于确认候选词，不应触发发送。
   // isComposing 为标准属性，keyCode === 229 作为部分浏览器/输入法的兜底判断
   if (event.isComposing || event.keyCode === 229) {
+    return
+  }
+  if (event.key === 'Backspace' && !inputText.value && selectedSkills.value.length) {
+    selectedSkills.value.pop()
+    return
+  }
+  if (showSlashMenu.value && slashMenuRef.value?.handleKeyDown(event)) {
     return
   }
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -605,6 +705,7 @@ const handleSend = async () => {
   if (!canSend.value) return
 
   closeModelDropdown()
+  closeSlashMenu()
 
   const message = inputText.value.trim()
   if (!message && !pendingImages.value.length) return
@@ -630,6 +731,7 @@ const handleSend = async () => {
 
   const conversationKey = getOrCreateActiveConversationKey()
   const titleMessage = message || '[图片]'
+  const skillNames = [...selectedSkillNames.value]
   const streamTask = {
     conversationKey,
     currentUserMessage: titleMessage,
@@ -641,10 +743,11 @@ const handleSend = async () => {
     paused: false,
   }
 
-  chatStore.addMessage('user', message, conversationKey, uploadedImages)
+  chatStore.addMessage('user', message, conversationKey, uploadedImages, skillNames)
 
   inputText.value = ''
   pendingImages.value = []
+  selectedSkills.value = []
   resetInputVisualState()
 
   chatStore.addMessage('assistant', '', conversationKey)
@@ -659,6 +762,7 @@ const handleSend = async () => {
       message,
       sessionId,
       model,
+      skillNames,
       images: uploadedImages.map((image) => ({
         image_id: image.image_id,
         file_name: image.file_name,
@@ -839,6 +943,12 @@ watch(inputText, () => {
   })
 })
 
+watch(showSlashMenu, (open) => {
+  if (open) {
+    void loadSkills()
+  }
+})
+
 watch(
   () => [chatStore.isStreaming, chatStore.awaitingApproval],
   ([isStreaming, awaitingApproval]) => {
@@ -981,29 +1091,45 @@ onUnmounted(() => {
         stroke-width: 2;
       }
     }
-
-    &.compact-button {
-      width: 24px;
-      height: 24px;
-      background-color: transparent;
-      color: var(--text-secondary);
-
-      &:hover:not(.disabled-btn) {
-        background-color: var(--bg-hover);
-        color: var(--primary-color);
-      }
-
-      &.disabled-btn {
-        opacity: 0.45;
-        cursor: not-allowed;
-      }
-
-      svg {
-        width: 17px;
-        height: 17px;
-      }
-    }
   }
+}
+
+.input-editor-line {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.selected-skills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.selected-skill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  height: 24px;
+  color: var(--primary-color, #90138b);
+  font-size: 14px;
+  font-weight: 600;
+
+  :deep(.tool-activity-icon) {
+    width: 17px;
+    height: 17px;
+    margin-right: 5px;
+  }
+}
+
+.selected-skill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pending-images {
@@ -1059,7 +1185,9 @@ onUnmounted(() => {
 }
 
 .chat-input {
-  flex: none;
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 120px;
   padding: 0;
   background-color: transparent;
   border: none;
@@ -1134,7 +1262,7 @@ onUnmounted(() => {
     border: 0;
     border-radius: 999px;
     background: transparent;
-    color: var(--text-secondary, #626262);
+    color: var(--text-primary, #242424);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -1223,15 +1351,19 @@ onUnmounted(() => {
       background: var(--bg-hover, rgba(0, 0, 0, 0.05));
     }
 
-    &.active {
-      background: rgba(0, 0, 0, 0.08);
-    }
   }
 
   .model-option-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .model-option-content {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
   }
 
   .model-option-check {
