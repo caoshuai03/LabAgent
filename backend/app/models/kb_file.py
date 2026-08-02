@@ -5,7 +5,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,10 +16,20 @@ class KbFile(Base):
     """知识库文件表，记录文件名、URL 及其向量片段 ID。"""
 
     __tablename__ = "ali_oss_file"
+    __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_ali_oss_file_content_hash"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键id")
     file_name: Mapped[str | None] = mapped_column(String, nullable=True, comment="文件名")
     url: Mapped[str | None] = mapped_column(String, nullable=True, comment="链接地址")
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="文件内容 SHA-256，用于重复上传检测",
+    )
+    source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True, comment="原始资料来源地址")
+    license: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="资料许可证")
     vector_id: Mapped[str | None] = mapped_column(Text, nullable=True, comment="文件分割出的向量文本ID")
     status: Mapped[str] = mapped_column(
         String(20),

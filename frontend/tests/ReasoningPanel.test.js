@@ -9,10 +9,17 @@ import { describe, expect, it } from 'vitest'
 import ReasoningPanel from '../src/components/ReasoningPanel.vue'
 
 describe('ReasoningPanel', () => {
-  it('展示当前思考内容，并允许用户手动折叠', async () => {
+  it('在一个面板内展示多段思考并用横线分隔', async () => {
     const wrapper = mount(ReasoningPanel, {
       props: {
         reasoning: [
+          {
+            reasoning_id: 'agent-1',
+            round_number: 1,
+            content: '正在分析用户需求。',
+            is_complete: true,
+            collapsed: true,
+          },
           {
             reasoning_id: 'agent-2',
             round_number: 2,
@@ -25,9 +32,13 @@ describe('ReasoningPanel', () => {
     })
 
     expect(wrapper.text()).toContain('正在思考')
+    expect(wrapper.text()).not.toContain('第 2 轮')
+    expect(wrapper.findAll('.reasoning-segment')).toHaveLength(1)
+    expect(wrapper.findAll('.reasoning-divider')).toHaveLength(1)
+    expect(wrapper.text()).toContain('正在分析用户需求。')
     expect(wrapper.text()).toContain('正在比对知识库中的实验要求。')
     await wrapper.find('.reasoning-header').trigger('click')
-    expect(wrapper.emitted('toggle')).toEqual([['agent-2']])
+    expect(wrapper.emitted('toggle')).toEqual([[]])
   })
 
   it('已完成的思考保留折叠状态', () => {

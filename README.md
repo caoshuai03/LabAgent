@@ -12,7 +12,7 @@ LabAgent 是一个面向教学实验的 Agentic RAG 平台，围绕课程知识�
 - **Agentic RAG 与三级检索**：由 Agent 自主检索课程知识库，结合多级召回、重排和来源引用生成可信回答。
 - **RAGAS 评测闭环**：内置 RAG 评测流程，支持用指标结果持续观察召回、回答相关性和忠实度。
 - **Skills 扩展**：按 Agent Skills 规范加载本地 Markdown Skills，支持斜杠选择、渐进披露、运行内激活和安全读取参考资源。
-- **Agent Memory**：支持会话上下文自动压缩和斜杠主动压缩、用户可编辑 `AGENTS.md`，以及可开关、自动沉淀的简洁 `USER_PROFILE.md` 长期记忆。
+- **Agent Memory**：支持会话上下文自动压缩和斜杠主动压缩、用户可编辑 `AGENTS.md`，以及可开关、自动沉淀的个性化记忆。
 - **多模型接入**：支持 Ollama 本地模型、OpenAI 兼容接口和自定义模型配置。
 - **多模态对话**：支持选择或粘贴 JPEG、PNG、WebP 图片，并将文本与图片交给视觉模型分析。
 - **沙箱隔离与工具安全**：支持受控文件工具和 Shell 工具，高风险操作需用户确认。
@@ -73,6 +73,8 @@ npm run dev
 
 完整配置见 [.env.example](.env.example)。部署前至少需要确认模型配置，并替换 `JWT_SECRET_KEY` 等默认敏感值。
 ARQ 默认使用 Redis DB 0，接口缓存通过 `REDIS_CACHE_URL` 使用独立的 DB 1；缓存故障时接口自动回源。
+会话自动压缩按当前模型上下文窗口的 80% 触发；外部模型窗口通过 `MODEL_CONTEXT_WINDOWS` 配置，解析失败时使用 `MODEL_CONTEXT_WINDOW_FALLBACK`。
+本地记忆提取模型默认关闭 reasoning，并通过 `MEMORY_EXTRACTION_NUM_PREDICT` 限制结构化 Profile 的最大生成 Token 数。
 
 ## 文档
 

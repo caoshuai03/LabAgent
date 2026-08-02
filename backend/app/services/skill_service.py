@@ -116,9 +116,13 @@ class SkillCatalog:
             resources=list(definition.resources),
         )
 
-    def catalog_prompt(self) -> str:
-        """生成只包含名称和简介的一级渐进披露目录。"""
-        summaries = self.list_summaries()
+    def catalog_prompt(self, excluded_names: set[str] | None = None) -> str:
+        """生成只包含未激活 Skill 名称和简介的一级渐进披露目录。"""
+        excluded = excluded_names or set()
+        summaries = [
+            item for item in self.list_summaries()
+            if item.name not in excluded
+        ]
         if not summaries:
             return ""
         lines = [
@@ -249,7 +253,10 @@ class SkillService:
         """生成当前运行已激活 Skill 的二级渐进披露内容。"""
         if not activations:
             return ""
-        parts = ["<active_skills>"]
+        parts = [
+            "<active_skills>",
+            "以下 Skill 已在当前运行中激活并可直接使用，不要再次调用 activate_skill。",
+        ]
         for activation in activations:
             parts.extend(
                 [

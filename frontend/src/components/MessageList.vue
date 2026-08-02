@@ -6,12 +6,46 @@
       ref="messageListRef"
       @scroll="handleScroll"
     >
-      <MessageItem
-        v-for="message in chatStore.messages"
-        :key="message.id"
-        :message="message"
-        @approval-decision="$emit('approval-decision', $event)"
-      />
+      <template v-for="message in chatStore.messages" :key="message.id">
+        <MessageItem
+          :message="message"
+          @approval-decision="$emit('approval-decision', $event)"
+        />
+        <div
+          v-if="
+            chatStore.compactionStatus
+              && chatStore.compactionAfterMessageId === message.id
+          "
+          class="compaction-divider"
+          :class="`is-${chatStore.compactionStatus}`"
+          role="status"
+          aria-live="polite"
+        >
+          <span>
+            {{
+              chatStore.compactionStatus === 'compressing'
+                ? '历史对话压缩中'
+                : '历史对话已被压缩'
+            }}
+          </span>
+        </div>
+      </template>
+
+      <div
+        v-if="chatStore.compactionStatus && !chatStore.compactionAfterMessageId"
+        class="compaction-divider"
+        :class="`is-${chatStore.compactionStatus}`"
+        role="status"
+        aria-live="polite"
+      >
+        <span>
+          {{
+            chatStore.compactionStatus === 'compressing'
+              ? '历史对话压缩中'
+              : '历史对话已被压缩'
+          }}
+        </span>
+      </div>
 
       <div v-if="chatStore.isStreaming" class="typing-indicator">
         <span></span>
@@ -44,7 +78,15 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import {
+  ref,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  onActivated,
+  onDeactivated,
+} from 'vue'
 import { useChatStore } from '../stores/chat'
 import MessageItem from './MessageItem.vue'
 
@@ -72,6 +114,9 @@ const BOTTOM_THRESHOLD = 1
 const conversationScrollPositions = new Map()
 let contentMutationObserver = null
 let containerResizeObserver = null
+let restoringConversationKey = null
+let lastScrollTop = 0
+let isComponentActive = true
 
 // 检查当前是否在底部区域
 const checkIsAtBottom = () => {
@@ -86,12 +131,19 @@ const syncScrollState = () => {
   if (!messageListRef.value) return
 
   const isAtBottom = checkIsAtBottom()
-  userHasScrolledUp.value = !isAtBottom
+  if (isAtBottom) {
+    userHasScrolledUp.value = false
+  }
   showScrollToBottomButton.value = !isAtBottom
+  lastScrollTop = messageListRef.value.scrollTop
 }
 
 const saveConversationScrollPosition = (conversationKey) => {
   if (!conversationKey || !messageListRef.value) return
+
+  const { clientHeight, scrollHeight } = messageListRef.value
+  // keep-alive 停用后容器可能已脱离布局，不能用失效尺寸覆盖已保存位置
+  if (clientHeight <= 0 || scrollHeight < clientHeight) return
 
   conversationScrollPositions.set(conversationKey, {
     scrollTop: messageListRef.value.scrollTop,
@@ -138,12 +190,16 @@ const handleScroll = () => {
   if (!messageListRef.value) return
 
   flashScrollbar()
+  if (messageListRef.value.scrollTop < lastScrollTop) {
+    userHasScrolledUp.value = true
+  }
   syncScrollState()
+  saveConversationScrollPosition(chatStore.activeConversationKey)
 }
 
 // 滚动到底部
 const scrollToBottom = (force = false) => {
-  if (!messageListRef.value) return
+  if (!messageListRef.value || restoringConversationKey || !isComponentActive) return
 
   // 只有在强制滚动或用户未主动上滑时才自动滚动
   if (force || !userHasScrolledUp.value) {
@@ -170,6 +226,13 @@ watch(
   },
 )
 
+watch(
+  () => chatStore.compactionStatus,
+  () => {
+    scrollToBottom()
+  },
+)
+
 // 监听最后一条消息的内容变化（流式输出文本时）
 watch(
   () => {
@@ -177,6 +240,19 @@ watch(
     if (messages.length === 0) return ''
     const lastMessage = messages[messages.length - 1]
     return lastMessage ? lastMessage.content : ''
+  },
+  () => {
+    scrollToBottom()
+  },
+)
+
+// 监听最后一条消息的思考内容变化，思考流式展开时保持置底
+watch(
+  () => {
+    const messages = chatStore.messages
+    if (messages.length === 0) return ''
+    const lastMessage = messages[messages.length - 1]
+    return lastMessage?.reasoning?.map((segment) => segment.content).join('') || ''
   },
   () => {
     scrollToBottom()
@@ -200,13 +276,25 @@ watch(
 watch(
   () => chatStore.activeConversationKey,
   (conversationKey, previousConversationKey) => {
+    if (!isComponentActive) {
+      restoringConversationKey = conversationKey
+      return
+    }
+
     saveConversationScrollPosition(previousConversationKey)
+    restoringConversationKey = conversationKey
     userHasScrolledUp.value = false
     showScrollToBottomButton.value = false
     nextTick(() => {
+      if (chatStore.activeConversationKey !== conversationKey) return
+
       restoreConversationScrollPosition(conversationKey, previousConversationKey)
+      if (restoringConversationKey === conversationKey) {
+        restoringConversationKey = null
+      }
     })
   },
+  { flush: 'sync' },
 )
 
 // 初始化：检查初始位置
@@ -231,6 +319,27 @@ onMounted(() => {
       })
       containerResizeObserver.observe(messageListRef.value)
     }
+  })
+})
+
+onDeactivated(() => {
+  isComponentActive = false
+  saveConversationScrollPosition(chatStore.activeConversationKey)
+})
+
+onActivated(() => {
+  isComponentActive = true
+  const conversationKey = chatStore.activeConversationKey
+  restoringConversationKey = conversationKey
+  nextTick(() => {
+    window.requestAnimationFrame(() => {
+      if (!isComponentActive || chatStore.activeConversationKey !== conversationKey) return
+
+      restoreConversationScrollPosition(conversationKey)
+      if (restoringConversationKey === conversationKey) {
+        restoringConversationKey = null
+      }
+    })
   })
 })
 
@@ -308,6 +417,37 @@ onBeforeUnmount(() => {
   }
 }
 
+.compaction-divider {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: var(--chat-content-track-width, min(100%, 880px));
+  margin: 16px auto;
+  color: #6f6f73;
+  font-size: 14px;
+  line-height: 1.5;
+
+  &::before,
+  &::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    background: #e4e4e7;
+  }
+
+  span {
+    flex-shrink: 0;
+  }
+
+  &.is-compressing {
+    color: color-mix(in srgb, var(--primary-color, #90138b) 42%, white);
+
+    span {
+      animation: compactionStatusPulse 1.6s ease-in-out infinite;
+    }
+  }
+}
+
 @media (max-width: 768px) {
   .message-list {
     padding-top: calc(68px + env(safe-area-inset-top));
@@ -373,6 +513,16 @@ onBeforeUnmount(() => {
   }
   30% {
     transform: translateY(-10px);
+    opacity: 1;
+  }
+}
+
+@keyframes compactionStatusPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
     opacity: 1;
   }
 }

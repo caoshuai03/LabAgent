@@ -3,18 +3,54 @@
 @date: 2026-07-12
 @description: 知识库模块路由——异步上传任务、同步更新、查询、删除与下载
 """
-from typing import Annotated
+from typing import Annotated, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.deps import AdminUser, CurrentUser, DbSession
+from app.core.errors import BusinessException, ErrorCode
 from app.core.response import BaseResponse, PageResult, success
 from app.schemas.knowledge import KbFileVO, KbUploadTaskVO
 from app.services.knowledge_cache import invalidate_knowledge_cache
 from app.services.knowledge_service import KnowledgeService
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+def _build_content_disposition(file_name: str) -> str:
+    """构造兼容中文文件名且仅包含 ASCII 的下载响应头。"""
+    safe_name = file_name.replace("\r", "_").replace("\n", "_")
+    extension = safe_name.rsplit(".", 1)[-1].lower()
+    fallback_name = (
+        f"download.{extension}"
+        if extension in {"pdf", "txt", "md", "markdown"}
+        else "download"
+    )
+    encoded_name = quote(safe_name, safe="")
+    return (
+        f'attachment; filename="{fallback_name}"; '
+        f"filename*=UTF-8''{encoded_name}"
+    )
+
+
+async def _read_upload_file(file: UploadFile) -> bytes:
+    """按配置上限读取上传内容，避免超大文件一次性进入应用内存。"""
+    max_bytes = settings.upload_max_size_mb * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise BusinessException(
+            ErrorCode.PARAMS_ERROR,
+            f"文件超过大小上限 {settings.upload_max_size_mb}MB",
+        )
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise BusinessException(
+            ErrorCode.PARAMS_ERROR,
+            f"文件超过大小上限 {settings.upload_max_size_mb}MB",
+        )
+    return data
 
 
 @router.post("/file/upload")
@@ -27,7 +63,7 @@ async def upload(
     service = KnowledgeService(db)
     results: list[KbUploadTaskVO] = []
     for upload_item in file:
-        data = await upload_item.read()
+        data = await _read_upload_file(upload_item)
         vo = await service.upload_file(
             upload_item.filename or "",
             data,
@@ -92,7 +128,7 @@ async def update(
     file: UploadFile,
 ) -> BaseResponse[KbFileVO]:
     """按 kb_file_id 定位已有文档做增量更新（管理员）：解析切分新文件、增量索引、替换 MinIO 对象。"""
-    data = await file.read()
+    data = await _read_upload_file(file)
     vo = await KnowledgeService(db).update_file(
         kb_file_id,
         file.filename or "",
@@ -109,11 +145,22 @@ async def query_files(
     current_user: CurrentUser,
     db: DbSession,
     file_name: Annotated[str | None, Query()] = None,
-    page: Annotated[int, Query()] = 1,
-    page_size: Annotated[int, Query()] = 10,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    sort_by: Annotated[
+        Literal["file_name", "total_chunks", "create_time"],
+        Query(),
+    ] = "create_time",
+    sort_order: Annotated[Literal["asc", "desc"], Query()] = "desc",
 ) -> BaseResponse[PageResult[KbFileVO]]:
     """分页查询文件记录。"""
-    result = await KnowledgeService(db).page_query(file_name, page, page_size)
+    result = await KnowledgeService(db).page_query(
+        file_name,
+        page,
+        page_size,
+        sort_by,
+        sort_order,
+    )
     return success(result)
 
 
@@ -133,5 +180,5 @@ async def download_file(id: int, current_user: CurrentUser, db: DbSession) -> St
     import io
 
     file_name, data = await KnowledgeService(db).get_file_content(id)
-    headers = {"Content-Disposition": f'attachment; filename="{file_name}"'}
+    headers = {"Content-Disposition": _build_content_disposition(file_name)}
     return StreamingResponse(io.BytesIO(data), media_type="application/octet-stream", headers=headers)

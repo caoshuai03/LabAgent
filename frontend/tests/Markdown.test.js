@@ -16,6 +16,32 @@ describe('renderMarkdown', () => {
     expect(html).toContain('</table></div>')
   })
 
+  it('使用 KaTeX 渲染行内公式和块级公式', () => {
+    const html = renderMarkdown(
+      '注意力权重为 $\\alpha_{ij}=\\frac{\\exp(a_{ij})}{\\sum_l\\exp(a_{il})}$。\n\n$$\\text{MultiHead}(Q,K,V)=\\text{Concat}(head_1,\\ldots,head_h)W^O$$',
+    )
+
+    expect(html).toContain('<eq><span class="katex">')
+    expect(html).toContain('<eqn><span class="katex-display">')
+    expect(html).not.toContain('$\\alpha_{ij}')
+  })
+
+  it('支持括号形式的公式分隔符', () => {
+    const html = renderMarkdown('行内公式 \\(x_i\\)，块级公式：\n\n\\[x^2+y^2=z^2\\]')
+
+    expect(html).toContain('<eq><span class="katex">')
+    expect(html).toContain('<eqn><span class="katex-display">')
+  })
+
+  it('规范化 Pandoc 风格的代码块语言并启用语法高亮', () => {
+    const html = renderMarkdown('```{.python}\nprint("LabAgent")\n```')
+
+    expect(html).toContain('<span class="code-block-lang">Python</span>')
+    expect(html).toContain('<code class="language-python">')
+    expect(html).toContain('<span class="hljs-built_in">print</span>')
+    expect(html).not.toContain('{.python}')
+  })
+
   it('移除末尾重复展示产物路径的代码块', () => {
     const content = [
       '已按要求完成：',

@@ -1,7 +1,7 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-30 00:00
-@description: 用户长期记忆、AGENTS.md 与会话压缩请求响应模型
+@description: 用户个性化记忆、AGENTS.md 与会话压缩请求响应模型
 """
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -15,14 +15,14 @@ class AgentsMemoryVO(BaseModel):
 
 
 class UserProfileMemoryVO(BaseModel):
-    """系统沉淀的用户长期 Profile。"""
+    """系统从对话中沉淀的用户个性化信息。"""
 
     content: str
     updated_at: datetime | None = None
 
 
 class MemorySettingsVO(BaseModel):
-    """当前用户长期记忆设置。"""
+    """当前用户个性化记忆设置。"""
 
     long_term_memory_enabled: bool = True
 
@@ -34,7 +34,7 @@ class UpdateAgentsMemoryRequest(BaseModel):
 
 
 class UpdateMemorySettingsRequest(BaseModel):
-    """更新当前用户长期记忆设置。"""
+    """更新当前用户个性化记忆设置。"""
 
     long_term_memory_enabled: bool
 

@@ -196,6 +196,12 @@ body {
   }
 }
 
+eqn {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 // highlight.js 样式
 :root {
   .hljs {

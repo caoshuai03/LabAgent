@@ -8,8 +8,8 @@ WORKDIR /app
 # 先拷贝依赖描述文件
 COPY package.json package-lock.json* ./
 
-# 安装依赖（若你没有 lock 文件，npm 仍会正常安装）
-RUN npm install
+# 严格按照 lock 文件安装依赖，保证容器构建结果可复现
+RUN npm ci
 
 # 拷贝源码并构建
 COPY . ./

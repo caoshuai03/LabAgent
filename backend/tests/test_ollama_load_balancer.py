@@ -13,6 +13,7 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from ollama import ResponseError
 
 from app.services.ollama_load_balancer import (
     LoadBalancedChatOllama,
@@ -132,6 +133,96 @@ async def test_auto_model_uses_azure_when_ollama_model_is_unavailable(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_context_window_uses_smallest_loaded_ollama_window(monkeypatch) -> None:
+    """多实例实际窗口不一致时必须取最小值，避免负载均衡后请求溢出。"""
+    monkeypatch.setattr(
+        settings,
+        "ollama_base_urls",
+        "http://ollama-a:11434,http://ollama-b:11434",
+    )
+    monkeypatch.setattr(settings, "model_context_windows", {})
+    provider = ModelProvider()
+    original_async_client = httpx.AsyncClient
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        context_length = 65_536 if request.url.host == "ollama-a" else 32_768
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": settings.ollama_chat_model,
+                        "context_length": context_length,
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.model_provider.httpx.AsyncClient",
+        lambda *, timeout: original_async_client(
+            timeout=timeout,
+            transport=httpx.MockTransport(handle_request),
+        ),
+    )
+
+    context_window = await provider.resolve_context_window(settings.ollama_chat_model)
+
+    assert context_window == 32_768
+
+
+@pytest.mark.asyncio
+async def test_context_window_uses_fallback_for_unloaded_ollama_endpoint(
+    monkeypatch,
+) -> None:
+    """任一负载均衡节点尚未加载模型时，该节点必须按保守窗口参与计算。"""
+    monkeypatch.setattr(
+        settings,
+        "ollama_base_urls",
+        "http://ollama-a:11434,http://ollama-b:11434",
+    )
+    monkeypatch.setattr(settings, "model_context_windows", {})
+    monkeypatch.setattr(settings, "model_context_window_fallback", 32_768)
+    provider = ModelProvider()
+    original_async_client = httpx.AsyncClient
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        models = (
+            [{"name": settings.ollama_chat_model, "context_length": 65_536}]
+            if request.url.host == "ollama-a"
+            else []
+        )
+        return httpx.Response(200, json={"models": models})
+
+    monkeypatch.setattr(
+        "app.services.model_provider.httpx.AsyncClient",
+        lambda *, timeout: original_async_client(
+            timeout=timeout,
+            transport=httpx.MockTransport(handle_request),
+        ),
+    )
+
+    context_window = await provider.resolve_context_window(settings.ollama_chat_model)
+
+    assert context_window == 32_768
+
+
+@pytest.mark.asyncio
+async def test_context_window_prefers_explicit_model_configuration(monkeypatch) -> None:
+    """显式模型窗口用于无法查询运行状态的外部模型，且不得访问 Ollama。"""
+    monkeypatch.setattr(
+        settings,
+        "model_context_windows",
+        {"gpt-5.5-2026-04-24": 200_000},
+    )
+    provider = ModelProvider()
+
+    context_window = await provider.resolve_context_window("gpt-5.5-2026-04-24")
+
+    assert context_window == 200_000
+
+
+@pytest.mark.asyncio
 async def test_embedding_model_availability_checks_configured_model(monkeypatch) -> None:
     """Embedding 预检应校验模型列表中存在当前配置的模型。"""
     monkeypatch.setattr(settings, "ollama_base_urls", "http://ollama-a:11434")
@@ -184,6 +275,37 @@ async def test_chat_does_not_retry_other_endpoint_by_default(monkeypatch) -> Non
         await model.ainvoke([HumanMessage(content="测试")])
 
     assert called_urls == ["http://ollama-a:11434"]
+
+
+@pytest.mark.asyncio
+async def test_chat_logs_non_retryable_400_response(monkeypatch, caplog) -> None:
+    """Ollama 4xx 不重试，但必须记录节点、状态码和精简原因。"""
+    pool = OllamaEndpointPool(["http://ollama-a:11434"])
+    model = LoadBalancedChatOllama(
+        model="qwen3.5:35b",
+        endpoint_pool=pool,
+        operation_name="memory_extraction",
+    )
+
+    class _Delegate:
+        async def _agenerate(self, *args: Any, **kwargs: Any) -> ChatResult:
+            raise ResponseError("不支持结构化输出参数", 400)
+
+    monkeypatch.setattr(
+        LoadBalancedChatOllama,
+        "_build_delegate",
+        lambda self, endpoint_url: _Delegate(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="labagent"):
+        with pytest.raises(ResponseError):
+            await model.ainvoke([HumanMessage(content="测试")])
+
+    assert "operation=memory_extraction" in caplog.text
+    assert "endpoint=http://ollama-a:11434" in caplog.text
+    assert "status_code=400" in caplog.text
+    assert "error_type=ResponseError" in caplog.text
+    assert "error=不支持结构化输出参数" in caplog.text
 
 
 @pytest.mark.asyncio

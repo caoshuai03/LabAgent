@@ -222,11 +222,17 @@ class AiService:
                     )
 
                 model_name = values.get("model_name")
+                context_window = values.get("model_context_window")
+                if not context_window:
+                    context_window = await model_provider.resolve_context_window(
+                        str(model_name or settings.ollama_chat_model)
+                    )
                 try:
                     result = await conversation_compaction_service.compact(
                         list(values.get("messages") or []),
                         existing_summary=values.get("conversation_summary"),
                         model_name=str(model_name) if model_name else None,
+                        context_window_tokens=int(context_window),
                         system_prompt=build_base_system_prompt(values),
                         tools=tool_registry.model_tools(),
                         force=True,
@@ -398,6 +404,7 @@ class AiService:
         session_id_str = str(sid)
         yield _sse_event("session", session_id_str, trace_id, {"session_id": session_id_str})
         resolved_model = await model_provider.resolve_chat_model_name(model)
+        model_context_window = await model_provider.resolve_context_window(resolved_model)
         graph_input = {
             "messages": [HumanMessage(content=message)],
             "current_run_images": [
@@ -406,6 +413,7 @@ class AiService:
             "user_id": user_id,
             "session_id": session_id_str,
             "model_name": resolved_model,
+            "model_context_window": model_context_window,
             "agent_run_id": trace_id,
             "tool_round": 0,
             "tool_call_signatures": {},

@@ -33,10 +33,20 @@ class _EmbeddingModelUnavailableError(RuntimeError):
 def _format_hits(documents: list) -> str:
     """把命中文档渲染为供模型阅读的参考资料文本。"""
     parts: list[str] = []
-    for index, document in enumerate(documents, start=1):
+    for document in documents:
+        citation_id = rag_retrieval.build_citation_id(document)
         source = document.metadata.get("source") or document.metadata.get("file_name") or "未知来源"
-        content = truncate_text(document.page_content or "", _HIT_SNIPPET_MAX_LEN)
-        parts.append(f"[资料{index}] 来源: {source}\n{content}")
+        title_path = [
+            str(document.metadata[key])
+            for key in ("course_name", "chapter_name", "section_name")
+            if document.metadata.get(key)
+        ]
+        location = f"\n标题路径: {' > '.join(title_path)}" if title_path else ""
+        content = truncate_text(
+            rag_retrieval.strip_title_context(document.page_content or ""),
+            _HIT_SNIPPET_MAX_LEN,
+        )
+        parts.append(f"[资料{citation_id}] 来源: {source}{location}\n{content}")
     return "\n\n".join(parts)
 
 
@@ -163,7 +173,7 @@ async def search_knowledge_base(
         return result_envelope(
             success=False,
             output="（知识库检索暂不可用，请基于已有信息回答或稍后重试）",
-            summary="知识库检索失败，已降级",
+            summary="Embedding模型不可用，知识库检索已降级",
             error=message,
             error_type="embedding_unavailable",
             duration_ms=duration_ms,

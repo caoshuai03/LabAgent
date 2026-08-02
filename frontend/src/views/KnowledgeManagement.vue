@@ -17,40 +17,39 @@
       >
         <div v-if="isDraggingUpload" class="upload-drop-hint" aria-hidden="true">
           <UploadIcon :size="22" />
-          <span>松开以上传知识库文件</span>
+          <span>松开以上传知识库文件或文件夹</span>
         </div>
-        <div v-if="uploading" class="uploading-overlay" role="status" aria-live="polite">
-          <div class="uploading-modal">
-            <div class="uploading-content">
-              <div class="uploading-text">
-                {{ uploadProgress === null ? '文件上传中...' : `文件上传中 ${uploadProgress}%` }}
-              </div>
-              <div class="upload-progress-track">
-                <div
-                  :class="['upload-progress-bar', { indeterminate: uploadProgress === null }]"
-                  :style="uploadProgress === null ? undefined : { width: `${uploadProgress}%` }"
-                />
-              </div>
-            </div>
+        <header v-if="!loading" class="page-header">
+          <div>
+            <h1>知识库</h1>
+            <p>
+              共 {{ totalFileCount }} 个文件
+              <span v-if="processingFileCount > 0">· {{ processingFileCount }} 个处理中</span>
+            </p>
           </div>
-        </div>
+          <button
+            class="action-button upload"
+            @click="handleUploadClick"
+            :disabled="!isAdmin || uploading"
+            @mouseenter="showAdminTip = !isAdmin"
+            @mouseleave="showAdminTip = false"
+            v-tooltip="!isAdmin ? '仅管理员可上传，请联系管理员' : ''"
+          >
+            <UploadIcon :size="16" />
+            <span>
+              {{
+                uploadBatchActive
+                  ? `上传中 ${uploadCurrentNumber}/${uploadTotalCount}`
+                  : uploading
+                    ? '更新中'
+                    : '上传文件'
+              }}
+            </span>
+          </button>
+        </header>
         <!-- 顶部操作栏 -->
         <div v-if="!loading" class="toolbar">
           <div class="toolbar-left">
-            <!-- 上传按钮：管理员可直接上传，普通用户点击显示气泡提示 -->
-            <div class="header-actions">
-              <button
-                class="action-button upload"
-                @click="handleUploadClick"
-                :disabled="!isAdmin || uploading"
-                @mouseenter="showAdminTip = !isAdmin"
-                @mouseleave="showAdminTip = false"
-                v-tooltip="!isAdmin ? '仅管理员可上传，请联系管理员' : ''"
-              >
-                <UploadIcon :size="16" />
-                <span>上传文件</span>
-              </button>
-            </div>
             <input
               ref="fileInput"
               type="file"
@@ -70,7 +69,13 @@
             <!-- 搜索框 -->
             <div class="search-box">
               <SearchIcon :size="18" />
-              <input v-model="searchKeyword" type="text" placeholder="搜索" @input="handleSearch" />
+              <input
+                v-model="searchKeyword"
+                type="text"
+                placeholder="搜索文件"
+                aria-label="搜索知识库文件"
+                @input="handleSearch"
+              />
               <button v-if="searchKeyword" @click="clearSearch" class="clear-search">×</button>
             </div>
           </div>
@@ -95,7 +100,6 @@
             </button>
           </div>
         </div>
-
         <!-- 加载状态 -->
         <div v-if="loading" class="loading-state">
           <div class="spinner"></div>
@@ -104,7 +108,9 @@
 
         <!-- 空状态 -->
         <div v-else-if="displayFileList.length === 0 && !searchKeyword" class="empty-state">
-          <h3>暂无记录</h3>
+          <div class="empty-file-mark">MD</div>
+          <h3>知识库还没有文件</h3>
+          <p>上传 PDF、TXT 或 Markdown 文件后即可检索</p>
         </div>
 
         <!-- 搜索无结果状态 -->
@@ -131,36 +137,108 @@
 
         <!-- 文件列表 -->
         <div v-else-if="displayFileList.length > 0" class="file-list">
-          <div
-            v-for="file in displayFileList"
-            :key="file.task_id || file.id"
-            :ref="(element) => setFileCardRef(element, file)"
-            :class="[
-              'file-card',
-              {
-                selected: selectedIds.includes(file.id),
-                highlighted: String(file.task_id) === highlightedTaskId,
-                'has-task': file.task_id,
-              },
-            ]"
-            @click="file.id != null && !isFileProcessing(file) && handleRowClick(file.id)"
-          >
-            <div class="file-header">
-              <div class="file-info">
-                <h3 class="file-name" v-tooltip="file.file_name">{{ file.file_name }}</h3>
-                <p class="file-time">{{ formatDate(file.create_time) }}</p>
-                <div v-if="file.task_id" class="task-state">
-                  <span :class="['task-badge', taskStatusClass(file)]">
-                    <span v-if="!knowledgeUploadStore.isTerminal(file.status)" class="task-spinner" />
-                    {{ taskStatusText(file) }}
+          <div class="file-list-header">
+            <div class="select-cell">
+              <input
+                type="checkbox"
+                :checked="isAllSelected"
+                aria-label="选择当前页全部文件"
+                @change="handleSelectAll"
+              />
+            </div>
+            <button
+              type="button"
+              :class="['sortable-header', { active: sortBy === 'file_name' }]"
+              @click="handleSort('file_name')"
+            >
+              文件
+              <span>{{ sortIndicator('file_name') }}</span>
+            </button>
+            <span>状态</span>
+            <button
+              type="button"
+              :class="['sortable-header', { active: sortBy === 'total_chunks' }]"
+              @click="handleSort('total_chunks')"
+            >
+              切片
+              <span>{{ sortIndicator('total_chunks') }}</span>
+            </button>
+            <button
+              type="button"
+              :class="['sortable-header', { active: sortBy === 'create_time' }]"
+              @click="handleSort('create_time')"
+            >
+              上传时间
+              <span>{{ sortIndicator('create_time') }}</span>
+            </button>
+            <span class="actions-label">操作</span>
+          </div>
+          <div class="file-list-body">
+            <div
+              v-for="file in displayFileList"
+              :key="file.local_id || file.task_id || file.id"
+              :ref="(element) => setFileCardRef(element, file)"
+              :class="[
+                'file-card',
+                {
+                  selected: selectedIds.includes(file.id),
+                  previewing: activePreviewFile?.id === file.id,
+                  highlighted: String(file.task_id) === highlightedTaskId,
+                  'has-task': file.task_id,
+                },
+              ]"
+              @click="file.id != null && !isFileProcessing(file) && handleRowClick(file.id)"
+            >
+              <div class="select-cell" @click.stop>
+                <input
+                  v-if="file.id != null"
+                  type="checkbox"
+                  :checked="selectedIds.includes(file.id)"
+                  :disabled="isFileProcessing(file)"
+                  :aria-label="`选择 ${file.file_name}`"
+                  @change="handleSelectFile(file.id, $event.target.checked)"
+                />
+              </div>
+              <div
+                class="file-info"
+                :class="{ previewable: file.id != null && !isFileProcessing(file) }"
+                @click.stop="togglePreview(file)"
+              >
+                <span :class="['file-type-mark', fileTypeClass(file.file_name)]">
+                  {{ fileTypeLabel(file.file_name) }}
+                </span>
+                <div class="file-title">
+                  <h3 class="file-name" v-tooltip="file.file_name">{{ file.file_name }}</h3>
+                  <span v-if="file.error_message" class="task-error">
+                    {{ file.error_message }}
                   </span>
-                  <span v-if="shouldShowTaskStage(file)" class="task-stage">
-                    {{ taskStageText(file.stage) }}
-                  </span>
-                  <span v-if="file.error_message" class="task-error">{{ file.error_message }}</span>
                 </div>
               </div>
-              <div v-if="isAdmin" class="file-actions" @click.stop>
+              <div class="task-state">
+                <span :class="['task-badge', taskStatusClass(file)]">
+                  <span v-if="taskStatusClass(file) === 'processing'" class="task-spinner" />
+                  {{ taskStatusText(file) }}
+                </span>
+                <span v-if="file.upload_status === 'uploading'" class="task-stage">
+                  {{ file.upload_progress }}%
+                </span>
+                <span v-else-if="shouldShowTaskStage(file)" class="task-stage">
+                  {{ taskStageText(file.stage) }}
+                </span>
+              </div>
+              <span class="chunk-count">{{ formatChunkCount(file.total_chunks) }}</span>
+              <time class="file-time" :datetime="file.create_time">
+                {{ formatDate(file.create_time) }}
+              </time>
+              <div class="file-actions" @click.stop>
+                <button
+                  v-if="file.upload_status === 'failed'"
+                  @click="handleRetryLocalUpload(file)"
+                  class="retry-btn"
+                  :disabled="uploading"
+                >
+                  重试上传
+                </button>
                 <button
                   v-if="file.task_id && knowledgeUploadStore.isFailed(file.status)"
                   @click="handleRetryTask(file.task_id)"
@@ -171,6 +249,42 @@
                 </button>
                 <button
                   v-if="file.id != null"
+                  @click="togglePreview(file)"
+                  class="icon-btn"
+                  :disabled="isFileProcessing(file)"
+                  :aria-label="activePreviewFile?.id === file.id ? '关闭预览' : '预览'"
+                  v-tooltip="
+                    isFileProcessing(file)
+                      ? '处理完成后可预览'
+                      : activePreviewFile?.id === file.id
+                        ? '关闭预览'
+                        : '预览'
+                  "
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path>
+                    <circle cx="12" cy="12" r="2.5"></circle>
+                  </svg>
+                </button>
+                <button
+                  v-if="file.id != null"
+                  @click="handleDownload(file.id)"
+                  class="icon-btn"
+                  :disabled="downloading || isFileProcessing(file)"
+                  v-tooltip="isFileProcessing(file) ? '处理完成后可下载' : '下载'"
+                >
+                  <DownloadIcon :size="16" />
+                </button>
+                <button
+                  v-if="isAdmin && file.id != null"
                   @click="handleUpdateClick(file.id)"
                   class="icon-btn"
                   :disabled="uploading || isFileProcessing(file)"
@@ -178,10 +292,107 @@
                 >
                   <UploadIcon :size="16" />
                 </button>
+                <button
+                  v-if="isAdmin && file.local_id && file.upload_status === 'failed'"
+                  @click="removePendingUpload(file.local_id)"
+                  class="icon-btn danger"
+                  :disabled="uploading"
+                  v-tooltip="'移除失败记录'"
+                >
+                  <TrashIcon :size="16" />
+                </button>
+                <button
+                  v-else-if="isAdmin && file.id != null"
+                  @click="handleDelete(file.id, file.file_name)"
+                  class="icon-btn danger"
+                  :disabled="deleting || isFileProcessing(file)"
+                  v-tooltip="isFileProcessing(file) ? '处理中暂不能删除' : '删除'"
+                >
+                  <TrashIcon :size="16" />
+                </button>
               </div>
             </div>
           </div>
         </div>
+        <footer v-if="!loading && totalFiles > 0" class="pagination">
+          <div class="page-size">
+            <span>每页</span>
+            <div class="page-size-selector" v-click-outside="closePageSizeDropdown">
+              <button
+                type="button"
+                class="page-size-trigger"
+                aria-label="每页文件数量"
+                aria-haspopup="listbox"
+                :aria-expanded="showPageSizeDropdown"
+                @click="togglePageSizeDropdown"
+                @keydown.esc="closePageSizeDropdown"
+              >
+                <span>{{ pageSize }}</span>
+                <ChevronDownIcon
+                  :size="12"
+                  class="page-size-chevron"
+                  :class="{ 'is-open': showPageSizeDropdown }"
+                />
+              </button>
+              <transition name="page-size-dropdown">
+                <div
+                  v-show="showPageSizeDropdown"
+                  class="page-size-menu"
+                  role="listbox"
+                  aria-label="选择每页文件数量"
+                  @keydown.esc="closePageSizeDropdown"
+                >
+                  <button
+                    v-for="option in PAGE_SIZE_OPTIONS"
+                    :key="option"
+                    type="button"
+                    class="page-size-option"
+                    :class="{ active: pageSize === option }"
+                    role="option"
+                    :aria-selected="pageSize === option"
+                    @click="selectPageSize(option)"
+                  >
+                    <svg
+                      class="page-size-check"
+                      :class="{ visible: pageSize === option }"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span>{{ option }}</span>
+                  </button>
+                </div>
+              </transition>
+            </div>
+            <span>条</span>
+          </div>
+          <div class="page-controls">
+            <span>共 {{ totalFiles }} 条</span>
+            <button
+              type="button"
+              aria-label="上一页"
+              :disabled="currentPage <= 1"
+              @click="changePage(currentPage - 1)"
+            >
+              <span aria-hidden="true">‹</span>
+            </button>
+            <span>{{ currentPage }} / {{ totalPages }}</span>
+            <button
+              type="button"
+              aria-label="下一页"
+              :disabled="currentPage >= totalPages"
+              @click="changePage(currentPage + 1)"
+            >
+              <span aria-hidden="true">›</span>
+            </button>
+          </div>
+        </footer>
 
         <!-- 旧表格保留作为备用 -->
         <div v-if="false" class="table-container">
@@ -295,31 +506,56 @@
           </table>
         </div>
       </div>
+      <KnowledgePreviewPanel
+        v-if="activePreviewFile"
+        :file="activePreviewFile"
+        @close="closePreview"
+        @download="handleDownload"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, reactive, computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { knowledgeApi } from '../api/knowledge'
 import { useChatStore } from '../stores/chat'
 import { useKnowledgeUploadStore } from '../stores/knowledgeUpload'
 import { useUserStore } from '../stores/user'
 import Sidebar from '../components/Sidebar.vue'
+import KnowledgePreviewPanel from '../components/KnowledgePreviewPanel.vue'
 import { sleep } from '../utils/async'
+import { assertDownloadableBlob, downloadBlob } from '../utils/blobResponse'
 import UploadIcon from '../components/icons/UploadIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import TrashIcon from '../components/icons/TrashIcon.vue'
 import SearchIcon from '../components/icons/SearchIcon.vue'
+import ChevronDownIcon from '../components/icons/ChevronDownIcon.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
+import { readJsonStorage } from '../utils/storage'
+import {
+  collectDroppedFiles,
+  partitionKnowledgeFiles,
+} from '../utils/knowledgeUploadFiles'
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100]
+const PAGE_SIZE_STORAGE_KEY = 'knowledge_page_size'
+const SORT_FIELDS = ['file_name', 'total_chunks', 'create_time']
+const SORT_ORDERS = ['asc', 'desc']
+const SORT_STORAGE_KEY = 'knowledge_sort'
+const storedPageSize = Number(readJsonStorage(PAGE_SIZE_STORAGE_KEY, 20))
+const storedSort = readJsonStorage(SORT_STORAGE_KEY)
+const hasValidStoredSort =
+  SORT_FIELDS.includes(storedSort?.sort_by) && SORT_ORDERS.includes(storedSort?.sort_order)
 
 // 初始化 chatStore 和 userStore
 const chatStore = useChatStore()
 const userStore = useUserStore()
 const knowledgeUploadStore = useKnowledgeUploadStore()
 const route = useRoute()
+const router = useRouter()
 const { confirm } = useConfirm()
 
 // 全局 toast：统一成功/失败反馈
@@ -337,23 +573,45 @@ let tipTimer = null
 
 // 状态
 const fileList = ref([...knowledgeUploadStore.fileRecords])
-const searchKeyword = ref('')
+const totalFiles = ref(fileList.value.length)
+const searchKeyword = ref(String(route.query.file_name || ''))
+const sortBy = ref(hasValidStoredSort ? storedSort.sort_by : null)
+const sortOrder = ref(hasValidStoredSort ? storedSort.sort_order : null)
+const currentPage = ref(1)
+const pageSize = ref(PAGE_SIZE_OPTIONS.includes(storedPageSize) ? storedPageSize : 20)
+const showPageSizeDropdown = ref(false)
 const selectedIds = ref([])
 const loading = ref(false)
 const uploading = ref(false)
 const isDraggingUpload = ref(false)
 const deleting = ref(false)
 const downloading = ref(false)
-const uploadProgress = ref(null)
+const uploadCompletedCount = ref(0)
+const uploadTotalCount = ref(0)
+const pendingUploads = ref([])
 const retryingTaskId = ref(null)
 const highlightedTaskId = ref('')
+const activePreviewFile = ref(null)
 const fileInput = ref(null)
 const updateFileInput = ref(null)
 const fileCardRefs = new Map()
 // 当前待更新的记录 id，供 handleUpdateFileSelect 使用
 const updatingId = ref(null)
 let highlightTimer = null
+let locatedUploadTaskId = ''
 let dragDepth = 0
+
+const uploadBatchActive = computed(() => uploading.value && uploadTotalCount.value > 0)
+const uploadCurrentNumber = computed(() =>
+  Math.min(uploadCompletedCount.value + 1, uploadTotalCount.value),
+)
+const totalFileCount = computed(() =>
+  Math.max(totalFiles.value, fileList.value.length),
+)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalFiles.value / pageSize.value)))
+const processingFileCount = computed(
+  () => displayFileList.value.filter((file) => isFileProcessing(file)).length,
+)
 
 const displayFileList = computed(() => {
   const records = fileList.value.map((file) => ({ ...file }))
@@ -365,7 +623,7 @@ const displayFileList = computed(() => {
     )
     if (index >= 0) {
       records.splice(index, 1, { ...records[index], ...task })
-    } else if (!searchKeyword.value) {
+    } else if (!searchKeyword.value && currentPage.value === 1) {
       records.unshift({
         ...task,
         id: task.kb_file_id ?? task.id,
@@ -373,19 +631,24 @@ const displayFileList = computed(() => {
       })
     }
   })
-  return records
+  return currentPage.value === 1 ? [...pendingUploads.value, ...records] : records
 })
 
 const isAllSelected = computed(() => {
   const selectableFiles = displayFileList.value.filter(
     (file) => file.id != null && !isFileProcessing(file),
   )
-  return selectableFiles.length > 0 && selectedIds.value.length === selectableFiles.length
+  return (
+    selectableFiles.length > 0 &&
+    selectableFiles.every((file) => selectedIds.value.includes(file.id))
+  )
 })
 
 // 防抖搜索
 let searchTimer = null
+let fileListRequestVersion = 0
 const handleSearch = () => {
+  resetPageContext()
   if (searchTimer) {
     clearTimeout(searchTimer)
   }
@@ -396,21 +659,96 @@ const handleSearch = () => {
 
 const clearSearch = () => {
   searchKeyword.value = ''
+  resetPageContext()
+  fetchFileList()
+}
+
+const resetPageContext = () => {
+  fileListRequestVersion += 1
+  currentPage.value = 1
+  selectedIds.value = []
+  closePreview()
+}
+
+const sortIndicator = (field) => {
+  if (sortBy.value !== field) return '↕'
+  return sortOrder.value === 'asc' ? '↑' : '↓'
+}
+
+const handleSort = (field) => {
+  if (sortBy.value !== field) {
+    sortBy.value = field
+    sortOrder.value = 'asc'
+  } else if (sortOrder.value === 'asc') {
+    sortOrder.value = 'desc'
+  } else {
+    sortBy.value = null
+    sortOrder.value = null
+  }
+  if (sortBy.value && sortOrder.value) {
+    localStorage.setItem(
+      SORT_STORAGE_KEY,
+      JSON.stringify({ sort_by: sortBy.value, sort_order: sortOrder.value }),
+    )
+  } else {
+    localStorage.removeItem(SORT_STORAGE_KEY)
+  }
+  resetPageContext()
+  fetchFileList()
+}
+
+const closePageSizeDropdown = () => {
+  showPageSizeDropdown.value = false
+}
+
+const togglePageSizeDropdown = () => {
+  showPageSizeDropdown.value = !showPageSizeDropdown.value
+}
+
+const selectPageSize = (size) => {
+  closePageSizeDropdown()
+  if (pageSize.value === size) return
+
+  pageSize.value = size
+  localStorage.setItem(PAGE_SIZE_STORAGE_KEY, JSON.stringify(size))
+  resetPageContext()
+  fetchFileList()
+}
+
+const changePage = (page) => {
+  const nextPage = Math.min(Math.max(page, 1), totalPages.value)
+  if (nextPage === currentPage.value) return
+  currentPage.value = nextPage
+  selectedIds.value = []
+  closePreview()
   fetchFileList()
 }
 
 const fetchFileList = async () => {
+  const requestVersion = ++fileListRequestVersion
   loading.value = fileList.value.length === 0 || Boolean(searchKeyword.value)
   try {
     const params = {}
     if (searchKeyword.value) {
       params.file_name = searchKeyword.value
     }
+    params.sort_by = sortBy.value || 'create_time'
+    params.sort_order = sortOrder.value || 'desc'
+    params.page = currentPage.value
+    params.page_size = pageSize.value
     const response = await knowledgeApi.getFileList(params)
+    if (requestVersion !== fileListRequestVersion) return
     if (response.data.code === 0) {
       const data = response.data.data
       // 兼容后端全量返回 records/list，以及历史可能直接返回数组的结构
       fileList.value = Array.isArray(data) ? data : data.records || data.list || []
+      totalFiles.value = Array.isArray(data) ? data.length : data.total ?? fileList.value.length
+      const maxPage = Math.max(1, Math.ceil(totalFiles.value / pageSize.value))
+      if (currentPage.value > maxPage) {
+        currentPage.value = maxPage
+        await fetchFileList()
+        return
+      }
       if (!searchKeyword.value) {
         knowledgeUploadStore.setFileRecords(fileList.value)
       }
@@ -419,10 +757,13 @@ const fetchFileList = async () => {
       showMessage('获取文件列表失败: ' + (response.data.message || '未知错误'), 'error')
     }
   } catch (error) {
+    if (requestVersion !== fileListRequestVersion) return
     console.error('获取文件列表错误:', error)
     showMessage('获取文件列表失败: ' + (error.message || '网络错误'), 'error')
   } finally {
-    loading.value = false
+    if (requestVersion === fileListRequestVersion) {
+      loading.value = false
+    }
   }
 }
 
@@ -439,15 +780,19 @@ const formatDate = (dateString) => {
 }
 
 const taskStatusText = (file) => {
-  if (knowledgeUploadStore.isSuccess(file.status)) return '处理完成'
-  if (knowledgeUploadStore.isFailed(file.status)) return '处理失败'
+  if (file.upload_status === 'waiting') return '等待上传'
+  if (file.upload_status === 'uploading') return '上传中'
+  if (file.upload_status === 'failed') return '上传失败'
+  const status = file.file_status || file.status
+  if (knowledgeUploadStore.isSuccess(status)) return '已完成'
+  if (knowledgeUploadStore.isFailed(status)) return '处理失败'
   const statusLabels = {
     pending: '等待处理',
     queued: '排队中',
     processing: '处理中',
     running: '处理中',
   }
-  return statusLabels[String(file.status || '').toLowerCase()] || '处理中'
+  return statusLabels[String(status || '').toLowerCase()] || '已完成'
 }
 
 const taskStageText = (stage) => {
@@ -469,14 +814,37 @@ const shouldShowTaskStage = (file) =>
   )
 
 const isFileProcessing = (file) =>
+  ['waiting', 'uploading'].includes(file.upload_status) ||
   ['pending', 'queued', 'processing', 'running'].includes(
     String(file.file_status || file.status || '').toLowerCase(),
   )
 
 const taskStatusClass = (file) => {
-  if (knowledgeUploadStore.isSuccess(file.status)) return 'success'
-  if (knowledgeUploadStore.isFailed(file.status)) return 'failed'
+  if (file.upload_status === 'failed') return 'failed'
+  const status = file.file_status || file.status
+  if (knowledgeUploadStore.isFailed(status)) return 'failed'
+  if (!file.upload_status && knowledgeUploadStore.isSuccess(status)) return 'success'
   return 'processing'
+}
+
+const fileTypeLabel = (fileName) => {
+  const extension = String(fileName || '').split('.').pop()?.toLowerCase()
+  if (extension === 'markdown') return 'MD'
+  return ['pdf', 'txt', 'md'].includes(extension) ? extension.toUpperCase() : 'FILE'
+}
+
+const fileTypeClass = (fileName) => `type-${fileTypeLabel(fileName).toLowerCase()}`
+
+const formatChunkCount = (totalChunks) =>
+  Number.isInteger(totalChunks) && totalChunks >= 0 ? totalChunks : '—'
+
+const togglePreview = (file) => {
+  if (file?.id == null || isFileProcessing(file)) return
+  activePreviewFile.value = activePreviewFile.value?.id === file.id ? null : file
+}
+
+const closePreview = () => {
+  activePreviewFile.value = null
 }
 
 const setFileCardRef = (element, file) => {
@@ -491,17 +859,25 @@ const setFileCardRef = (element, file) => {
 
 const locateUploadTask = async () => {
   const taskId = route.query.upload_task_id
-  if (!taskId) return
+  if (!taskId) {
+    locatedUploadTaskId = ''
+    return
+  }
   await nextTick()
   const key = String(taskId)
+  if (key === locatedUploadTaskId) return
   const element = fileCardRefs.get(key)
   if (!element) return
+  locatedUploadTaskId = key
   element.scrollIntoView({ behavior: 'smooth', block: 'center' })
   highlightedTaskId.value = key
   clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => {
     highlightedTaskId.value = ''
   }, 3000)
+  const nextQuery = { ...route.query }
+  delete nextQuery.upload_task_id
+  void router.replace({ query: nextQuery })
 }
 
 // 上传按钮点击处理：管理员直接上传，普通用户显示气泡提示
@@ -521,34 +897,57 @@ const handleUploadClick = () => {
 }
 
 const uploadFiles = async (files) => {
-  if (files.length === 0) return
-
-  uploading.value = true
-  uploadProgress.value = 0
-  try {
-    const totalBytes = Math.max(
-      files.reduce((sum, file) => sum + file.size, 0),
-      1,
+  const { supported, unsupported } = partitionKnowledgeFiles(files)
+  if (unsupported.length > 0) {
+    showMessage(
+      `已跳过 ${unsupported.length} 个不支持的文件，仅支持 PDF、TXT、Markdown`,
+      'warning',
     )
-    let uploadedBytes = 0
+  }
+  if (supported.length === 0) return
+
+  const uploadItems = supported.map((file, index) =>
+    reactive({
+      local_id: `upload-${Date.now()}-${index}`,
+      file,
+      file_name: file.name,
+      create_time: new Date().toISOString(),
+      upload_status: 'waiting',
+      upload_progress: 0,
+      error_message: null,
+    }),
+  )
+  pendingUploads.value.unshift(...uploadItems)
+  uploading.value = true
+  uploadCompletedCount.value = 0
+  uploadTotalCount.value = supported.length
+  try {
+    let succeededCount = 0
     const failedFiles = []
-    for (const file of files) {
+    for (const uploadItem of uploadItems) {
+      const { file } = uploadItem
+      uploadItem.upload_status = 'uploading'
       const formData = new FormData()
       formData.append('file', file)
       try {
         const response = await knowledgeApi.uploadFiles(formData, (progressEvent) => {
-          const currentLoaded = Math.min(progressEvent.loaded, file.size)
-          uploadProgress.value = Math.min(
+          uploadItem.upload_progress = Math.min(
             100,
-            Math.round(((uploadedBytes + currentLoaded) * 100) / totalBytes),
+            Math.round((Math.min(progressEvent.loaded, file.size) * 100) / Math.max(file.size, 1)),
           )
         })
         if (response.data.code === 0) {
           knowledgeUploadStore.registerUploadResult(response.data.data)
+          pendingUploads.value = pendingUploads.value.filter(
+            (item) => item.local_id !== uploadItem.local_id,
+          )
+          succeededCount += 1
         } else {
+          uploadItem.upload_status = 'failed'
+          uploadItem.error_message = response.data.message || '未知错误'
           failedFiles.push({
             file_name: file.name,
-            message: response.data.message || '未知错误',
+            message: uploadItem.error_message,
           })
         }
       } catch (error) {
@@ -556,18 +955,25 @@ const uploadFiles = async (files) => {
           error?.response?.status === 413
             ? '文件超过上传大小限制'
             : error?.response?.data?.message || error.message || '网络错误'
+        uploadItem.upload_status = 'failed'
+        uploadItem.error_message = message
         failedFiles.push({ file_name: file.name, message })
         console.error(`上传文件 ${file.name} 错误:`, error)
       } finally {
-        uploadedBytes += file.size
-        uploadProgress.value = Math.min(100, Math.round((uploadedBytes * 100) / totalBytes))
+        uploadCompletedCount.value += 1
       }
     }
     await fetchFileList()
     if (failedFiles.length > 0) {
       const firstFailure = failedFiles[0]
       const suffix = failedFiles.length > 1 ? `，另有 ${failedFiles.length - 1} 个文件失败` : ''
-      showMessage(`${firstFailure.file_name} 上传失败：${firstFailure.message}${suffix}`, 'error')
+      const successSuffix = succeededCount > 0 ? `；其余 ${succeededCount} 个已进入处理` : ''
+      showMessage(
+        `${firstFailure.file_name} 上传失败：${firstFailure.message}${suffix}${successSuffix}`,
+        'error',
+      )
+    } else {
+      showMessage(`${succeededCount} 个文件已上传，正在后台处理`, 'info')
     }
   } catch (error) {
     console.error('上传文件错误:', error)
@@ -587,7 +993,8 @@ const uploadFiles = async (files) => {
     }
   } finally {
     uploading.value = false
-    uploadProgress.value = null
+    uploadCompletedCount.value = 0
+    uploadTotalCount.value = 0
   }
 }
 
@@ -625,7 +1032,26 @@ const handleUploadDrop = async (event) => {
     return
   }
   if (uploading.value) return
-  await uploadFiles(Array.from(event.dataTransfer?.files || []))
+  try {
+    const files = await collectDroppedFiles(event.dataTransfer)
+    if (files.length === 0) {
+      showMessage('文件夹中没有可上传的文件', 'warning')
+      return
+    }
+    await uploadFiles(files)
+  } catch (error) {
+    console.error('读取拖拽文件夹失败:', error)
+    showMessage('读取文件夹失败，请检查文件访问权限后重试', 'error')
+  }
+}
+
+const removePendingUpload = (localId) => {
+  pendingUploads.value = pendingUploads.value.filter((item) => item.local_id !== localId)
+}
+
+const handleRetryLocalUpload = async (uploadItem) => {
+  removePendingUpload(uploadItem.local_id)
+  await uploadFiles([uploadItem.file])
 }
 
 // 更新文件按钮点击：记录待更新 id 并打开文件选择
@@ -654,7 +1080,10 @@ const handleUpdateFileSelect = async (event) => {
     }
   } catch (error) {
     console.error('更新文件错误:', error)
-    showMessage('文件更新失败: ' + (error?.response?.data?.message || error.message || '网络错误'), 'error')
+    showMessage(
+      '文件更新失败: ' + (error?.response?.data?.message || error.message || '网络错误'),
+      'error',
+    )
   } finally {
     uploading.value = false
     updatingId.value = null
@@ -749,6 +1178,9 @@ const deleteFiles = async (ids) => {
   try {
     const response = await knowledgeApi.deleteFiles(ids)
     if (response.data.code === 0) {
+      if (activePreviewFile.value && ids.includes(activePreviewFile.value.id)) {
+        closePreview()
+      }
       showMessage(response.data.message || '删除成功')
       selectedIds.value = []
       fetchFileList()
@@ -776,28 +1208,17 @@ const downloadFiles = async (ids) => {
   downloading.value = true
   try {
     // 获取要下载的文件信息
-    const filesToDownload = fileList.value.filter((file) => ids.includes(file.id))
+    const filesToDownload = displayFileList.value.filter((file) => ids.includes(file.id))
 
     for (const file of filesToDownload) {
       try {
         // 优先使用新的文件流下载API
         const response = await knowledgeApi.downloadFile(file.id)
+        const blob = await assertDownloadableBlob(response.data)
+        downloadBlob(blob, file.file_name || `file_${file.id}`)
 
-        // 处理blob下载
-        if (response.data instanceof Blob) {
-          const blob = response.data
-          const url = window.URL.createObjectURL(blob)
-          const link = document.createElement('a')
-          link.href = url
-          link.download = file.file_name || `file_${file.id}`
-          document.body.appendChild(link)
-          link.click()
-          document.body.removeChild(link)
-          window.URL.revokeObjectURL(url)
-
-          // 添加延迟避免浏览器阻止多个下载
-          await sleep(200)
-        }
+        // 添加延迟避免浏览器阻止多个下载
+        await sleep(200)
       } catch (apiError) {
         console.error(`API下载文件 ${file.id} 失败:`, apiError)
 
@@ -864,7 +1285,7 @@ onBeforeUnmount(() => {
 .knowledge-main {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: var(--app-height, 100vh);
   overflow: hidden;
   min-width: 0;
@@ -873,14 +1294,15 @@ onBeforeUnmount(() => {
 .knowledge-content {
   position: relative;
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: 28px 32px 24px;
   overflow: hidden;
   transition: padding-left 0.2s ease;
 
   &.dragging-upload {
-    box-shadow: inset 0 0 0 2px rgba(144, 19, 139, 0.24);
+    box-shadow: inset 0 0 0 2px var(--border-color-hover);
   }
 
   &.sidebar-collapsed {
@@ -896,74 +1318,68 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  border: 1px dashed rgba(144, 19, 139, 0.4);
+  border: 1px dashed var(--border-color-hover);
   border-radius: 8px;
   background: var(--bg-primary);
-  color: var(--accent-color);
+  color: var(--text-secondary);
   font-size: 14px;
   font-weight: 500;
   pointer-events: none;
 }
 
-// 上传遮罩层：上传期间阻止用户重复操作，并提供明确的等待反馈
-.uploading-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  z-index: 9999;
+.page-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
 
-  .uploading-modal {
-    background-color: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 20px 22px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    max-width: 80vw;
-    min-width: min(360px, calc(100vw - 48px));
-  }
-
-  .uploading-content {
-    width: 100%;
-  }
-
-  .uploading-text {
+  h1 {
+    margin: 0;
     color: var(--text-primary);
-    font-size: 14px;
-    margin-bottom: 10px;
+    font-size: 21px;
+    font-weight: 650;
+    letter-spacing: -0.02em;
   }
 
-  .upload-progress-track {
-    height: 6px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: rgba(144, 19, 139, 0.12);
-  }
-
-  .upload-progress-bar {
-    height: 100%;
-    border-radius: inherit;
-    background: #90138b;
-    transition: width 0.2s ease;
-
-    &.indeterminate {
-      width: 45%;
-      animation: uploadProgressIndeterminate 1.2s ease-in-out infinite;
-    }
+  p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
   }
 }
 
-@keyframes uploadProgressIndeterminate {
-  0% {
-    transform: translateX(-110%);
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 1px solid var(--primary-color);
+  border-radius: 7px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--primary-color) 88%, white);
   }
-  100% {
-    transform: translateX(240%);
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 35%, transparent);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
   }
 }
 
@@ -980,7 +1396,7 @@ onBeforeUnmount(() => {
     width: 32px;
     height: 32px;
     border: 3px solid var(--border-color);
-    border-top-color: #90138b;
+    border-top-color: var(--text-secondary);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -990,7 +1406,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0;
+  gap: 8px;
   padding: 80px 0;
   color: var(--text-secondary);
 
@@ -999,6 +1415,26 @@ onBeforeUnmount(() => {
     font-size: 16px;
     color: var(--text-primary);
   }
+
+  p {
+    margin: 0;
+    font-size: 13px;
+  }
+}
+
+.empty-file-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 50px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
 // 顶部操作栏
@@ -1007,7 +1443,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  min-height: 38px;
+  margin-bottom: 12px;
 
   .toolbar-left {
     display: flex;
@@ -1017,35 +1454,10 @@ onBeforeUnmount(() => {
     transition: padding-left 0.2s ease;
   }
 
-  // 上传按钮包装器（用于定位气泡提示）
-  .header-actions {
-    position: relative;
-    display: inline-block;
-  }
-
   // 普通用户上传按钮禁用样式
   .primary-button.disabled-style {
     opacity: 0.6;
     cursor: not-allowed;
-  }
-
-  .action-button {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    border: none;
-    border-radius: 6px;
-    background: rgba(144, 19, 139, 0.1);
-    color: #90138b;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-
-    &:hover:not(:disabled) {
-      background: rgba(144, 19, 139, 0.15);
-    }
   }
 
   @keyframes fadeIn {
@@ -1070,7 +1482,7 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: 6px;
     padding: 8px 20px;
-    background-color: #90138b;
+    background-color: var(--primary-color);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -1080,7 +1492,7 @@ onBeforeUnmount(() => {
     transition: all 0.2s ease;
 
     &:hover:not(:disabled) {
-      background-color: #9b2a96;
+      background-color: color-mix(in srgb, var(--primary-color) 88%, white);
     }
 
     &:disabled {
@@ -1094,15 +1506,16 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 16px;
-    background-color: var(--bg-secondary);
+    padding: 7px 12px;
+    background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 20px;
-    width: 280px;
+    border-radius: 7px;
+    width: 300px;
     transition: all 0.2s ease;
 
     &:focus-within {
-      border-color: rgba(144, 19, 139, 0.3);
+      border-color: var(--border-color-hover);
+      box-shadow: 0 0 0 2px var(--bg-secondary);
     }
 
     svg {
@@ -1150,15 +1563,15 @@ onBeforeUnmount(() => {
     padding: 6px 14px;
     border: none;
     border-radius: 6px;
-    background: rgba(144, 19, 139, 0.1);
-    color: #90138b;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
 
     &:hover:not(:disabled) {
-      background: rgba(144, 19, 139, 0.15);
+      background: var(--bg-hover);
     }
 
     &:disabled {
@@ -1179,90 +1592,203 @@ onBeforeUnmount(() => {
 
 // ==================== 文件列表 ====================
 .file-list {
+  --file-grid: 36px minmax(240px, 1fr) 160px 72px 176px 152px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
   flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-primary);
   overflow: auto;
 }
 
-.file-card {
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 14px 18px;
-  background-color: var(--bg-secondary);
-  transition: all 0.2s;
-  cursor: pointer;
+.file-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: var(--file-grid);
+  align-items: center;
+  min-width: 860px;
+  min-height: 39px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 
-  &:hover {
-    background-color: rgba(144, 19, 139, 0.03);
-  }
-
-  &.selected,
-  &.highlighted {
-    background-color: rgba(144, 19, 139, 0.08);
-    border-color: rgba(144, 19, 139, 0.2);
+  .actions-label {
+    text-align: right;
   }
 }
 
-.file-header {
-  display: flex;
-  justify-content: space-between;
+.sortable-header {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
+  justify-self: start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
 
-  @media (max-width: 768px) {
-    flex-direction: column;
-    align-items: flex-start;
+  span {
+    width: 12px;
+    color: var(--text-tertiary);
+    font-size: 10px;
+    text-align: center;
+  }
+
+  &:hover,
+  &.active {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-color-hover);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+}
+
+.file-list-body {
+  min-width: 860px;
+}
+
+.file-card {
+  display: grid;
+  grid-template-columns: var(--file-grid);
+  align-items: center;
+  min-height: 60px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+  transition: background-color 0.16s ease;
+  cursor: pointer;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &:hover {
+    background-color: var(--bg-tertiary);
+  }
+
+  &.selected,
+  &.previewing,
+  &.highlighted {
+    background-color: var(--bg-active);
+  }
+}
+
+.select-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  input {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--text-secondary);
+    cursor: pointer;
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
   }
 }
 
 .file-info {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   flex: 1;
+  min-width: 0;
+
+  &.previewable {
+    cursor: pointer;
+  }
+}
+
+.file-type-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 31px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+
+  &.type-pdf {
+    border-color: var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+  }
+
+  &.type-txt {
+    border-color: var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+  }
+}
+
+.file-title {
   min-width: 0;
 }
 
 .file-name {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0 0 6px 0;
+  margin: 0;
   color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 560;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .file-time {
-  margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .task-state {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 9px;
-  font-size: 12px;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
 }
 
 .task-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 3px 7px;
   border-radius: 999px;
   font-weight: 500;
 
   &.processing {
-    color: #90138b;
-    background: rgba(144, 19, 139, 0.1);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
   }
 
   &.success {
-    color: #047857;
-    background: rgba(16, 185, 129, 0.11);
+    color: #26734d;
+    background: rgba(38, 115, 77, 0.09);
   }
 
   &.failed {
@@ -1274,26 +1800,42 @@ onBeforeUnmount(() => {
 .task-spinner {
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(144, 19, 139, 0.25);
-  border-top-color: #90138b;
+  border: 1.5px solid var(--border-color-hover);
+  border-top-color: var(--text-secondary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
 .task-stage {
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-error {
-  flex-basis: 100%;
+  display: block;
+  max-width: 420px;
+  margin-top: 3px;
   color: #dc3545;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   word-break: break-word;
+}
+
+.chunk-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  justify-content: flex-end;
   flex-shrink: 0;
 }
 
@@ -1329,9 +1871,19 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: all 0.2s ease;
 
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+
   &:hover:not(:disabled) {
     background-color: var(--bg-hover);
     color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-color-hover);
+    outline-offset: 1px;
   }
 
   &:disabled {
@@ -1344,6 +1896,160 @@ onBeforeUnmount(() => {
       background-color: rgba(220, 53, 69, 0.1);
       color: #dc3545;
     }
+  }
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 42px;
+  padding-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.page-size,
+.page-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-size-selector {
+  position: relative;
+}
+
+.page-size-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 58px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--border-color-hover);
+    background: var(--bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-color-hover);
+    outline-offset: 1px;
+  }
+}
+
+.page-size-chevron {
+  color: var(--text-secondary);
+  transition: transform 0.16s ease;
+
+  &.is-open {
+    transform: rotate(180deg);
+  }
+}
+
+.page-size-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  width: 86px;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.14);
+}
+
+.page-size-option {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-hover);
+    outline: none;
+  }
+
+  &.active {
+    color: var(--primary-color);
+    font-weight: 600;
+  }
+}
+
+.page-size-check {
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+
+  &.visible {
+    opacity: 1;
+  }
+}
+
+.page-size-dropdown-enter-active,
+.page-size-dropdown-leave-active {
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.page-size-dropdown-enter-from,
+.page-size-dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.page-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+
+  span {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  &:hover:not(:disabled) {
+    background: var(--bg-secondary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-color-hover);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 }
 
@@ -1480,6 +2186,15 @@ onBeforeUnmount(() => {
     }
   }
 
+  .page-header {
+    align-items: flex-start;
+    margin-bottom: 16px;
+
+    .action-button {
+      min-height: 38px;
+    }
+  }
+
   .toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1505,13 +2220,10 @@ onBeforeUnmount(() => {
       }
     }
 
-    .header-actions,
-    .action-button,
     .search-box {
       width: 100%;
     }
 
-    .action-button,
     .batch-btn {
       justify-content: center;
       min-height: 44px;
@@ -1536,13 +2248,58 @@ onBeforeUnmount(() => {
     overscroll-behavior-y: contain;
   }
 
+  .file-list-header {
+    display: none;
+  }
+
+  .file-list-body {
+    min-width: 0;
+  }
+
   .file-card {
-    padding: 14px;
+    grid-template-columns: 26px minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 5px 8px;
+    min-height: 68px;
+    padding: 9px 10px;
+
+    > .select-cell {
+      grid-column: 1;
+      grid-row: 1 / 3;
+    }
+
+    > .file-info {
+      grid-column: 2;
+      grid-row: 1;
+    }
+
+    > .task-state {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    > .chunk-count,
+    > .file-time {
+      display: none;
+    }
   }
 
   .file-actions {
-    width: 100%;
+    grid-column: 3;
+    grid-row: 1 / 3;
     justify-content: flex-end;
+  }
+
+  .pagination {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .page-size,
+  .page-controls {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .retry-btn,

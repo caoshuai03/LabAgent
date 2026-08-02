@@ -58,6 +58,13 @@ class ToolPolicy:
         if tool_name == "search_knowledge_base":
             # 只读知识库检索，无路径/命令参数，低风险直接放行
             return ToolPolicyDecision(True, False, "low")
+        if tool_name == "save_user_memory":
+            memory = arguments.get("memory")
+            if not isinstance(memory, str) or not memory.strip():
+                return ToolPolicyDecision(False, False, "medium", "需要记住的信息不能为空")
+            if len(memory) > 4_000:
+                return ToolPolicyDecision(False, False, "medium", "需要记住的信息过长")
+            return ToolPolicyDecision(True, False, "medium")
         if tool_name in {"activate_skill", "read_skill_resource"}:
             if not settings.skills_enabled:
                 return ToolPolicyDecision(False, False, "low", "Skills 未启用")
@@ -76,6 +83,13 @@ class ToolPolicy:
         try:
             for field in _FILE_PATH_FIELDS[tool_name]:
                 value = str(arguments.get(field, ""))
+                if Path(value).name.casefold() == "user_profile.md":
+                    return ToolPolicyDecision(
+                        False,
+                        False,
+                        "high",
+                        "USER_PROFILE.md 只能通过 save_user_memory 更新",
+                    )
                 workspace_manager.validate_relative_path(workspace, value, allow_missing=True)
         except WorkspaceError as exc:
             return ToolPolicyDecision(False, False, "high", str(exc))

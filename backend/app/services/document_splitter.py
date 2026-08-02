@@ -1,24 +1,99 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-14
-@description: 文档切分服务——QA 语料专用切分（保留完整问答对）+ 普通文档 Token 切分（chunk 参数可配）
+@description: 文档切分服务——QA 专用切分、Markdown 标题感知切分与普通文档 Token 切分
 """
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from app.core.config import settings
+from app.services.context_token_counter import context_token_counter
 
 # QA 语料标识常量：分隔符、问题前缀、答案前缀
 _QA_SEPARATOR = "---"
 _QUESTION_PREFIX = "Q:"
 _ANSWER_PREFIX = "A:"
+_MARKDOWN_EXTENSIONS = {".md", ".markdown"}
+_MARKDOWN_HEADERS = [
+    ("#", "chapter_name"),
+    ("##", "section_name"),
+    ("###", "subsection_name"),
+]
+_MAX_TITLE_CONTEXT_RATIO = 0.25
 
 
 def split_documents(documents: list[Document]) -> list[Document]:
-    """切分入口：探测是否为 QA 语料，命中走 QA 切分，否则走普通 Token 切分。"""
+    """切分入口：QA 优先，Markdown 先按标题分段，其余文档直接按 Token 切分。"""
     if _is_qa_corpus(documents):
-        return _split_qa(documents)
-    return _split_token(documents)
+        chunks = _split_qa(documents)
+        return _finalize_chunks(chunks, add_title_context=False)
+    is_markdown = _is_markdown(documents)
+    chunks = _split_markdown(documents) if is_markdown else _split_token(documents)
+    return _finalize_chunks(chunks, add_title_context=is_markdown)
+
+
+def _is_markdown(documents: list[Document]) -> bool:
+    """根据 loader 写入的 source 扩展名判断是否为 Markdown。"""
+    return bool(documents) and all(
+        str(doc.metadata.get("source", "")).lower().endswith(tuple(_MARKDOWN_EXTENSIONS))
+        for doc in documents
+    )
+
+
+def _split_markdown(documents: list[Document]) -> list[Document]:
+    """先按 Markdown 标题层级切分并保留章节元数据，再按 Token 控制最终切片大小。"""
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=_MARKDOWN_HEADERS,
+        strip_headers=False,
+    )
+    sections: list[Document] = []
+    for document in documents:
+        for section in header_splitter.split_text(document.page_content):
+            section.metadata = {**document.metadata, **section.metadata}
+            sections.append(section)
+    chunks: list[Document] = []
+    for section in sections:
+        title_context = _build_title_context(section.metadata)
+        if not title_context:
+            chunks.extend(_split_token([section]))
+            continue
+        max_title_tokens = max(1, int(settings.rag_chunk_size * _MAX_TITLE_CONTEXT_RATIO))
+        title_context = context_token_counter.truncate_text(title_context, max_title_tokens)
+        prefix = f"标题路径：{title_context}\n\n"
+        body_chunk_size = max(1, settings.rag_chunk_size - context_token_counter.count_text(prefix))
+        section.metadata["_title_context"] = title_context
+        chunks.extend(
+            _split_token(
+                [section],
+                chunk_size=body_chunk_size,
+                chunk_overlap=min(settings.rag_chunk_overlap, max(body_chunk_size - 1, 0)),
+            )
+        )
+    return chunks
+
+
+def _finalize_chunks(chunks: list[Document], *, add_title_context: bool) -> list[Document]:
+    """补齐稳定切片元数据，并让 Markdown 标题路径参与 embedding。"""
+    for index, chunk in enumerate(chunks):
+        source = str(chunk.metadata.get("source") or "")
+        chunk.metadata["file_name"] = str(chunk.metadata.get("file_name") or source)
+        chunk.metadata["chunk_index"] = index
+        if not add_title_context:
+            continue
+        title_context = str(chunk.metadata.pop("_title_context", ""))
+        if title_context:
+            chunk.page_content = f"标题路径：{title_context}\n\n{chunk.page_content}"
+    return chunks
+
+
+def _build_title_context(metadata: dict[str, object]) -> str:
+    """根据课程与标题层级构造用于 embedding 的短路径。"""
+    title_path = [
+        str(metadata[key])
+        for key in ("course_name", "chapter_name", "section_name", "subsection_name")
+        if metadata.get(key)
+    ]
+    return " > ".join(title_path)
 
 
 def _is_qa_corpus(documents: list[Document]) -> bool:
@@ -59,11 +134,16 @@ def _parse_qa_pair(block: str) -> tuple[str, str]:
     return question, answer
 
 
-def _split_token(documents: list[Document]) -> list[Document]:
+def _split_token(
+    documents: list[Document],
+    *,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> list[Document]:
     """普通文档按 token 计数切分，chunk_size / overlap 从 Settings 读取。"""
     splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         encoding_name="o200k_base",
-        chunk_size=settings.rag_chunk_size,
-        chunk_overlap=settings.rag_chunk_overlap,
+        chunk_size=chunk_size if chunk_size is not None else settings.rag_chunk_size,
+        chunk_overlap=chunk_overlap if chunk_overlap is not None else settings.rag_chunk_overlap,
     )
     return splitter.split_documents(documents)

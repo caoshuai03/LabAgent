@@ -6,6 +6,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
@@ -65,6 +66,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://aistudio.baidu.com/llm/lmapi/v3"
     openai_chat_model: str = "ernie-4.5-turbo-128k-preview"
+    # 外部模型无法统一查询实际上下文窗口，按模型名显式配置；Ollama 优先读取运行实例。
+    model_context_windows: dict[str, int] = Field(default_factory=dict)
+    model_context_window_fallback: int = Field(default=32768, gt=0)
 
     # Azure OpenAI 网关（字节 aidp modelhub）
     azure_api_key: str = ""
@@ -74,8 +78,10 @@ class Settings(BaseSettings):
     # 链路追踪 logid（X-TT-LOGID）；留空则每次构造时自动生成
     azure_logid: str = ""
 
-    # 用户级 Markdown 长期记忆根目录；上下文 200K/80%/10% 阈值按实现约定固定，不做配置
+    # 用户级 Markdown 长期记忆根目录
     memory_root: str = "./data/memory"
+    # 记忆提取输出上限；本地模型关闭推理，仅生成结构化 Profile
+    memory_extraction_num_predict: int = Field(default=4096, gt=0)
     # 新会话标题生成：失败或超时时自动保留首条消息截断标题
     conversation_title_enabled: bool = True
     conversation_title_model: str = ""

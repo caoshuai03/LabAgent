@@ -23,6 +23,7 @@ logger = logging.getLogger("labagent")
 
 _AUTO_MODEL = "auto"
 _OLLAMA_MODEL_PROBE_TIMEOUT_SECONDS = 2.0
+_OLLAMA_CONTEXT_WINDOW_TIMEOUT_SECONDS = 2.0
 
 # 外部（OpenAI 兼容）模型清单，对齐参考项目 RagConstant.OPENAI_LLM
 _OPENAI_MODELS = {
@@ -76,6 +77,54 @@ class ModelProvider:
         fallback_model = settings.azure_chat_model
         logger.info("AUTO模型路由: provider=azure, model=%s", fallback_model)
         return fallback_model
+
+    async def resolve_context_window(self, model_name: str) -> int:
+        """解析模型实际上下文窗口，Ollama 多节点取最小值以保证负载均衡安全。"""
+        configured_window = settings.model_context_windows.get(model_name)
+        if configured_window is not None and configured_window > 0:
+            return configured_window
+        if model_name in _AZURE_MODELS or model_name in _OPENAI_MODELS:
+            return settings.model_context_window_fallback
+
+        context_windows = await asyncio.gather(
+            *(
+                self._ollama_loaded_context_window(endpoint_url, model_name)
+                for endpoint_url in self._ollama_endpoint_pool.endpoint_urls
+            )
+        )
+        safe_windows = [
+            window or settings.model_context_window_fallback
+            for window in context_windows
+        ]
+        return min(safe_windows)
+
+    @staticmethod
+    async def _ollama_loaded_context_window(
+        endpoint_url: str,
+        model_name: str,
+    ) -> int | None:
+        """从 Ollama 运行状态读取已加载模型的实际 context_length。"""
+        try:
+            async with httpx.AsyncClient(
+                timeout=_OLLAMA_CONTEXT_WINDOW_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.get(f"{endpoint_url}/api/ps")
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError, TypeError):
+            return None
+
+        models = payload.get("models", []) if isinstance(payload, dict) else []
+        if not isinstance(models, list):
+            return None
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            loaded_name = item.get("name") or item.get("model")
+            context_length = item.get("context_length")
+            if loaded_name == model_name and isinstance(context_length, int) and context_length > 0:
+                return context_length
+        return None
 
     async def embedding_model_available(self) -> bool:
         """在两秒内确认至少一个 Ollama Endpoint 已加载 Embedding 模型。"""
@@ -162,6 +211,21 @@ class ModelProvider:
             operation_name="rerank",
             reasoning=False,
             num_predict=settings.rag_rerank_num_predict,
+            temperature=0,
+            client_kwargs={"timeout": settings.model_request_timeout_seconds},
+        )
+
+    def get_memory_extraction_model(self, model: str | None = None) -> BaseChatModel:
+        """构建记忆提取模型；本地模型关闭思考并限制结构化 Profile 输出。"""
+        model_name = model or settings.ollama_chat_model
+        if model_name in _AZURE_MODELS or model_name in _OPENAI_MODELS:
+            return self.get_chat_model(model_name, operation_name="memory_extraction")
+        return LoadBalancedChatOllama(
+            model=model_name,
+            endpoint_pool=self._ollama_endpoint_pool,
+            operation_name="memory_extraction",
+            reasoning=False,
+            num_predict=settings.memory_extraction_num_predict,
             temperature=0,
             client_kwargs={"timeout": settings.model_request_timeout_seconds},
         )

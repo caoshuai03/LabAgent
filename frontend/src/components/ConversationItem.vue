@@ -9,13 +9,26 @@
       },
     ]"
     @click="handleClick"
-    @mouseenter="showActions = true"
+    @mouseenter="handleMouseEnter"
     @mouseleave="handleMouseLeave"
   >
     <!-- 批量删除模式下通过点击整行切换选中状态，交互与知识库文件列表保持一致 -->
     <div class="content" @dblclick="handleDoubleClick">
-      <div class="title">{{ conversation.title }}</div>
+      <div
+        ref="titleRef"
+        :class="['title', { scrollable: isTitleOverflowing }]"
+        :style="titleScrollStyle"
+      >
+        <span ref="titleTextRef" class="title-text">{{ conversation.title }}</span>
+      </div>
     </div>
+
+    <span
+      v-if="!isSelectionMode && (isStreaming || hasUnreadCompletion)"
+      :class="['conversation-status', { streaming: isStreaming }]"
+      :aria-label="isStreaming ? '正在输出' : '输出已完成'"
+      role="status"
+    />
 
     <div
       v-if="(showActions || isMenuOpen || isCoarsePointer) && !isSelectionMode"
@@ -77,6 +90,14 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  isStreaming: {
+    type: Boolean,
+    default: false,
+  },
+  hasUnreadCompletion: {
+    type: Boolean,
+    default: false,
+  },
   isSelectionMode: {
     type: Boolean,
     default: false,
@@ -109,6 +130,25 @@ const menuStyle = ref({})
 const isRenaming = ref(false)
 const editTitle = ref('')
 const editInputRef = ref(null)
+const titleRef = ref(null)
+const titleTextRef = ref(null)
+const isTitleOverflowing = ref(false)
+const titleScrollStyle = ref({})
+let titleResizeObserver = null
+
+const updateTitleOverflow = async () => {
+  await nextTick()
+  if (!titleRef.value || !titleTextRef.value) return
+
+  const overflowDistance = Math.ceil(titleTextRef.value.scrollWidth - titleRef.value.clientWidth)
+  isTitleOverflowing.value = overflowDistance > 1
+  titleScrollStyle.value = isTitleOverflowing.value
+    ? {
+        '--title-scroll-distance': `-${overflowDistance}px`,
+        '--title-scroll-duration': `${Math.min(10, Math.max(3, overflowDistance / 24))}s`,
+      }
+    : {}
+}
 
 const handleClick = (event) => {
   if (props.isSelectionMode) {
@@ -156,6 +196,11 @@ const handleDelete = () => {
 const handleEnterBatchMode = () => {
   emit('toggleMenu', { conversationId: props.conversation.id, nextOpen: false })
   emit('enterBatchMode')
+}
+
+const handleMouseEnter = () => {
+  showActions.value = true
+  updateTitleOverflow()
 }
 
 // 鼠标移出时仅隐藏按钮区域，已展开菜单继续保留，等待外部点击后关闭
@@ -227,14 +272,24 @@ watch(
   },
 )
 
+watch(() => props.conversation.title, updateTitleOverflow)
+
 onMounted(() => {
   isCoarsePointer.value = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+  updateTitleOverflow()
+  if (typeof ResizeObserver !== 'undefined') {
+    titleResizeObserver = new ResizeObserver(updateTitleOverflow)
+    if (titleRef.value) {
+      titleResizeObserver.observe(titleRef.value)
+    }
+  }
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
 })
 
 onBeforeUnmount(() => {
+  titleResizeObserver?.disconnect()
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', handleViewportChange)
   window.removeEventListener('scroll', handleViewportChange, true)
@@ -297,9 +352,56 @@ onBeforeUnmount(() => {
       font-weight: 400;
       white-space: nowrap;
       overflow: hidden;
-      text-overflow: ellipsis;
       color: var(--text-primary);
+
+      .title-text {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      &.scrollable {
+        .title-text {
+          width: max-content;
+          overflow: visible;
+        }
+      }
     }
+  }
+
+  &:hover .title.scrollable .title-text {
+    animation: conversation-title-scroll var(--title-scroll-duration) ease-in-out infinite alternate;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+      width: auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .conversation-status {
+    position: absolute;
+    right: 16px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+
+    &.streaming {
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border-color);
+      border-top-color: var(--text-secondary);
+      background: transparent;
+      animation: conversation-status-spin 0.8s linear infinite;
+    }
+  }
+
+  &:hover .conversation-status,
+  &:has(.actions.visible) .conversation-status {
+    display: none;
   }
 
   .actions {
@@ -403,6 +505,24 @@ onBeforeUnmount(() => {
     background-color: var(--bg-primary);
     color: var(--text-primary);
     z-index: 2;
+  }
+}
+
+@keyframes conversation-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes conversation-title-scroll {
+  0%,
+  15% {
+    transform: translateX(0);
+  }
+
+  85%,
+  100% {
+    transform: translateX(var(--title-scroll-distance));
   }
 }
 </style>

@@ -19,10 +19,18 @@ from app.services.skill_cache_service import SkillCacheService
 
 def test_knowledge_page_key_hides_search_content() -> None:
     """分页缓存键不应直接暴露用户输入的文件名。"""
-    key = build_knowledge_page_key(3, "敏感课程资料.md", 1, 10)
+    key = build_knowledge_page_key(
+        3,
+        "敏感课程资料.md",
+        1,
+        10,
+        "file_name",
+        "asc",
+    )
 
     assert "敏感课程资料" not in key
-    assert key.startswith("labagent:knowledge:page:v1:3:")
+    assert key.startswith("labagent:knowledge:page:v2:3:")
+    assert key.endswith(":file_name:asc")
 
 
 @pytest.mark.asyncio
@@ -74,6 +82,35 @@ async def test_knowledge_page_cache_hit_skips_database() -> None:
     assert result.total == 1
     assert result.records[0].file_name == "course.md"
     service.repo.page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_knowledge_page_passes_sorting_to_repository() -> None:
+    """知识库分页应将白名单排序条件传递给 Repository。"""
+    service = KnowledgeService.__new__(KnowledgeService)
+    service.repo = SimpleNamespace(page=AsyncMock(return_value=(0, [])))
+    service.task_repo = SimpleNamespace(latest_by_file_ids=AsyncMock(return_value={}))
+
+    with patch(
+        "app.services.knowledge_service.cache_service.get_version",
+        AsyncMock(return_value=None),
+    ):
+        result = await service.page_query(
+            None,
+            1,
+            10,
+            "total_chunks",
+            "asc",
+        )
+
+    assert result.total == 0
+    service.repo.page.assert_awaited_once_with(
+        None,
+        1,
+        10,
+        "total_chunks",
+        "asc",
+    )
 
 
 @pytest.mark.asyncio

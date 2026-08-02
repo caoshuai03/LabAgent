@@ -14,6 +14,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 
 from app.core.config import settings
+from app.tools.idempotency import tool_idempotency_store
 from app.tools.policy import tool_policy
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 from app.tools.workspace import WorkspaceError, workspace_manager
@@ -66,6 +67,8 @@ async def _invoke_file_tool(
     """安全校验后委托给 FileManagementToolkit。"""
     started = time.monotonic()
     writer = safe_stream_writer()
+    workspace: Path | None = None
+    idempotency_claimed = False
     try:
         workspace = _workspace_from_state(state)
         decision = tool_policy.evaluate(
@@ -78,6 +81,24 @@ async def _invoke_file_tool(
 
         if tool_name == "write_file" and len(str(arguments.get("text", ""))) > settings.tool_max_write_chars:
             raise WorkspaceError("写入内容超出长度限制")
+
+        idempotency = await asyncio.to_thread(
+            tool_idempotency_store.begin,
+            workspace,
+            tool_name,
+            tool_call_id,
+            arguments,
+        )
+        if idempotency.cached_result is not None:
+            return idempotency.cached_result
+        if idempotency.uncertain:
+            return result_envelope(
+                success=False,
+                summary=f"{tool_name} 未重复执行",
+                error="同一工具调用上次执行状态不确定，已阻止重复产生副作用",
+                error_type="idempotency_conflict",
+            )
+        idempotency_claimed = bool(tool_call_id)
 
         writer({
             "tool_event": {
@@ -117,7 +138,7 @@ async def _invoke_file_tool(
                 },
             }
         })
-        return result_envelope(
+        result = result_envelope(
             success=success,
             output=output if success else "",
             summary=summary,
@@ -127,6 +148,16 @@ async def _invoke_file_tool(
             preview_language=preview_language,
             preview_content=preview_content,
         )
+        if idempotency_claimed:
+            await asyncio.to_thread(
+                tool_idempotency_store.complete,
+                workspace,
+                tool_name,
+                tool_call_id,
+                arguments,
+                result,
+            )
+        return result
     except TimeoutError:
         duration_ms = int((time.monotonic() - started) * 1000)
         logger.exception(
@@ -148,13 +179,23 @@ async def _invoke_file_tool(
                 },
             }
         })
-        return result_envelope(
+        result = result_envelope(
             success=False,
             summary=f"{tool_name} 执行超时",
             error=message,
             error_type="timeout",
             duration_ms=duration_ms,
         )
+        if idempotency_claimed and workspace is not None:
+            await asyncio.to_thread(
+                tool_idempotency_store.complete,
+                workspace,
+                tool_name,
+                tool_call_id,
+                arguments,
+                result,
+            )
+        return result
     except Exception as exc:  # noqa: BLE001 - 工具异常需转换为可控 ToolMessage
         duration_ms = int((time.monotonic() - started) * 1000)
         logger.exception(
@@ -177,13 +218,23 @@ async def _invoke_file_tool(
                 },
             }
         })
-        return result_envelope(
+        result = result_envelope(
             success=False,
             summary=f"{tool_name} 执行失败",
             error=message,
             error_type=error_type,
             duration_ms=duration_ms,
         )
+        if idempotency_claimed and workspace is not None:
+            await asyncio.to_thread(
+                tool_idempotency_store.complete,
+                workspace,
+                tool_name,
+                tool_call_id,
+                arguments,
+                result,
+            )
+        return result
 
 
 @tool

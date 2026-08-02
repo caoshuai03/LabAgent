@@ -38,6 +38,7 @@ async def activate_skill(
                 if not already_active
                 else f"Skill {definition.name} 已处于激活状态"
             ),
+            internal=already_active,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
     except SkillError as exc:

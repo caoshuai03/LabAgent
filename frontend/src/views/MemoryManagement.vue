@@ -1,7 +1,7 @@
 <!--
  @author: caoshuai.cs
  @date: 2026-07-30 00:00
- @description: 用户 AGENTS.md 与 USER_PROFILE.md 长期记忆管理页面
+ @description: 用户 AGENTS.md 与个性化记忆管理页面
 -->
 <template>
   <div class="memory-page">
@@ -47,17 +47,22 @@
         <section class="memory-panel profile-panel">
           <div class="section-heading">
             <div>
-              <h2>USER_PROFILE.md</h2>
-              <p>由系统从对话中自动沉淀，开启长期记忆后会固定注入后续对话。</p>
+              <h2>个性化信息</h2>
+              <p>系统会从对话中了解你的稳定偏好、背景与协作方式，用于提供更贴合你的回答。</p>
             </div>
             <label class="memory-switch">
+              <span>个性化记忆</span>
               <input
                 v-model="longTermMemoryEnabled"
                 type="checkbox"
+                role="switch"
+                :aria-checked="longTermMemoryEnabled"
                 :disabled="settingsSaving"
                 @change="saveSettings"
               />
-              <span>{{ longTermMemoryEnabled ? '长期记忆已开启' : '长期记忆已关闭' }}</span>
+              <span class="switch-track" aria-hidden="true">
+                <span class="switch-thumb"></span>
+              </span>
             </label>
           </div>
           <textarea
@@ -65,7 +70,7 @@
             class="memory-editor profile-editor"
             spellcheck="false"
             readonly
-            aria-label="查看我的 USER_PROFILE.md"
+            aria-label="查看我的个性化信息"
           ></textarea>
         </section>
       </div>
@@ -142,7 +147,7 @@ const loadSettings = async () => {
     const response = await getMemorySettings()
     longTermMemoryEnabled.value = response.data.data?.long_term_memory_enabled ?? true
   } catch (error) {
-    toast.error(error.response?.data?.message || '加载长期记忆设置失败')
+    toast.error(error.response?.data?.message || '加载个性化记忆设置失败')
   }
 }
 
@@ -152,10 +157,10 @@ const saveSettings = async () => {
   try {
     const response = await updateMemorySettings(nextValue)
     longTermMemoryEnabled.value = response.data.data?.long_term_memory_enabled ?? nextValue
-    toast.success(longTermMemoryEnabled.value ? '长期记忆已开启' : '长期记忆已关闭')
+    toast.success(longTermMemoryEnabled.value ? '个性化记忆已开启' : '个性化记忆已关闭')
   } catch (error) {
     longTermMemoryEnabled.value = !nextValue
-    toast.error(error.response?.data?.message || '保存长期记忆设置失败')
+    toast.error(error.response?.data?.message || '保存个性化记忆设置失败')
   } finally {
     settingsSaving.value = false
   }
@@ -279,15 +284,58 @@ onMounted(() => {
 .memory-switch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--text-secondary);
   font-size: 13px;
   white-space: nowrap;
+  cursor: pointer;
 
   input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .switch-track {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex: 0 0 36px;
+    border-radius: 999px;
+    background: var(--border-color);
+    transition: background 0.2s ease;
+  }
+
+  .switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
     width: 16px;
     height: 16px;
-    accent-color: var(--primary-color);
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
+  }
+
+  input:checked + .switch-track {
+    background: var(--primary-color);
+  }
+
+  input:checked + .switch-track .switch-thumb {
+    transform: translateX(16px);
+  }
+
+  input:focus-visible + .switch-track {
+    box-shadow: 0 0 0 3px rgba(144, 19, 139, 0.16);
+  }
+
+  &:has(input:disabled) {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 }
 
@@ -399,12 +447,6 @@ onMounted(() => {
   .memory-switch {
     min-height: 44px;
     white-space: normal;
-
-    input {
-      width: 20px;
-      height: 20px;
-      flex: 0 0 20px;
-    }
   }
 
   .memory-editor {

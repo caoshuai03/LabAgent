@@ -1,7 +1,7 @@
 """
 @author: caoshuai.cs
 @date: 2026-07-30 00:00
-@description: 当前用户 AGENTS.md 与 USER_PROFILE.md 长期记忆接口
+@description: 当前用户 AGENTS.md 与个性化记忆接口
 """
 import asyncio
 
@@ -48,14 +48,14 @@ async def update_agents_memory(
 
 @router.get("/profile")
 async def get_user_profile_memory(current_user: CurrentUser) -> BaseResponse[UserProfileMemoryVO]:
-    """读取当前用户长期 USER_PROFILE.md。"""
+    """读取当前用户的个性化信息。"""
     content, updated_at = await asyncio.to_thread(memory_service.get_profile, current_user.id)
     return success(UserProfileMemoryVO(content=content, updated_at=updated_at))
 
 
 @router.get("/settings")
 async def get_memory_settings(current_user: CurrentUser) -> BaseResponse[MemorySettingsVO]:
-    """读取当前用户长期记忆设置。"""
+    """读取当前用户个性化记忆设置。"""
     settings = await asyncio.to_thread(memory_service.get_settings, current_user.id)
     return success(MemorySettingsVO.model_validate(settings))
 
@@ -65,7 +65,7 @@ async def update_memory_settings(
     req: UpdateMemorySettingsRequest,
     current_user: CurrentUser,
 ) -> BaseResponse[MemorySettingsVO]:
-    """更新当前用户长期记忆设置。"""
+    """更新当前用户个性化记忆设置。"""
     settings = await asyncio.to_thread(
         memory_service.update_settings,
         current_user.id,

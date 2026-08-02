@@ -1,7 +1,7 @@
 /**
  * @author: caoshuai.cs
  * @date: 2026-07-30 00:00
- * @description: 当前用户 AGENTS.md 与 USER_PROFILE.md 长期记忆管理 API
+ * @description: 当前用户 AGENTS.md 与个性化记忆管理 API
  */
 import apiClient from './index'
 

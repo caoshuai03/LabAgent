@@ -5,12 +5,12 @@
 -->
 <template>
   <section v-if="segments.length" class="reasoning-panel">
-    <article v-for="segment in segments" :key="segment.reasoning_id" class="reasoning-segment">
+    <article class="reasoning-segment">
       <button
         type="button"
         class="reasoning-header"
-        :aria-expanded="!segment.collapsed"
-        @click="$emit('toggle', segment.reasoning_id)"
+        :aria-expanded="!collapsed"
+        @click="$emit('toggle')"
       >
         <span class="reasoning-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -19,12 +19,10 @@
             <path d="M9 12h6M8.5 17.5h7M10 21h4"></path>
           </svg>
         </span>
-        <span class="reasoning-title">{{ segment.is_complete ? '已思考完成' : '正在思考' }}</span>
-        <span v-if="segments.length > 1" class="reasoning-round">第 {{ segment.round_number }} 轮</span>
-        <span v-if="!segment.is_complete" class="reasoning-pulse" aria-hidden="true"></span>
+        <span class="reasoning-title">{{ isComplete ? '已思考完成' : '正在思考' }}</span>
         <svg
           class="reasoning-chevron"
-          :class="{ expanded: !segment.collapsed }"
+          :class="{ expanded: !collapsed }"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -36,7 +34,12 @@
           <path d="m9 18 6-6-6-6"></path>
         </svg>
       </button>
-      <div v-show="!segment.collapsed" class="reasoning-content">{{ segment.content }}</div>
+      <div v-show="!collapsed" class="reasoning-content">
+        <template v-for="(segment, index) in segments" :key="segment.reasoning_id">
+          <hr v-if="index > 0" class="reasoning-divider" />
+          <div class="reasoning-text">{{ segment.content }}</div>
+        </template>
+      </div>
     </article>
   </section>
 </template>
@@ -56,6 +59,9 @@ const props = defineProps({
 const segments = computed(() => {
   return props.reasoning.filter((segment) => typeof segment?.content === 'string' && segment.content)
 })
+
+const isComplete = computed(() => segments.value.every((segment) => segment.is_complete))
+const collapsed = computed(() => segments.value.every((segment) => segment.collapsed))
 </script>
 
 <style lang="scss" scoped>
@@ -69,10 +75,6 @@ const segments = computed(() => {
   @media (max-width: 768px) {
     padding: 0 12px;
   }
-}
-
-.reasoning-segment + .reasoning-segment {
-  margin-top: 4px;
 }
 
 .reasoning-header {
@@ -108,22 +110,6 @@ const segments = computed(() => {
   line-height: 1.35;
 }
 
-.reasoning-round {
-  margin-left: 7px;
-  color: var(--text-tertiary, #989aa3);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.reasoning-pulse {
-  width: 5px;
-  height: 5px;
-  margin-left: 7px;
-  border-radius: 50%;
-  background: #90138b;
-  animation: reasoning-pulse 1.2s ease-in-out infinite;
-}
-
 .reasoning-chevron {
   width: 15px;
   height: 15px;
@@ -143,19 +129,16 @@ const segments = computed(() => {
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
+}
+
+.reasoning-text {
   white-space: pre-wrap;
 }
 
-@keyframes reasoning-pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .reasoning-pulse {
-    animation: none;
-  }
+.reasoning-divider {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid #d9d9d9;
 }
 
 @media (hover: none) and (pointer: coarse) {

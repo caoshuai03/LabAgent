@@ -75,7 +75,10 @@ const getCallDetail = (toolCall) => {
 
 <style lang="scss" scoped>
 .tool-approval-inline {
-  width: min(100%, 760px);
+  box-sizing: border-box;
+  width: min(calc(100% - 16px), 760px);
+  min-width: 0;
+  max-width: calc(100% - 16px);
   margin: 10px 0 16px 16px;
   padding: 16px;
   border: 1px solid var(--border-color, #dedede);
@@ -84,6 +87,8 @@ const getCallDetail = (toolCall) => {
   background: var(--bg-secondary, #f7f7f7);
 
   @media (max-width: 768px) {
+    width: 100%;
+    max-width: 100%;
     margin: 8px 0 12px;
   }
 }
@@ -104,10 +109,14 @@ const getCallDetail = (toolCall) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 12px;
 }
 
 .approval-call {
+  min-width: 0;
+  max-width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border-color, #e1e1e1);
   border-radius: 9px;
@@ -122,16 +131,19 @@ const getCallDetail = (toolCall) => {
 }
 
 .approval-call pre {
-  max-height: 160px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   margin: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   color: var(--text-primary, #333);
   background: transparent;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
   line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  overflow-wrap: normal;
+  white-space: pre;
 }
 
 .approval-actions {

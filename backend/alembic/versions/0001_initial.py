@@ -1,8 +1,6 @@
-"""
-@author: caoshuai.cs
-@date: 2026-08-01
-@description: LabAgent 当前完整数据库基线
-"""
+# @author: caoshuai.cs
+# @date: 2026-08-01
+# @description: LabAgent 当前完整数据库基线
 from collections.abc import Sequence
 
 import sqlalchemy as sa

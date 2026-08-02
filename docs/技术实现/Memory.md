@@ -26,7 +26,9 @@ LabAgent 将 Memory 分为：
 - 消息内容。
 - Tool Schema。
 
-当前实现按 200K 上下文窗口、80% 触发线和 10% 摘要预算工作。这些是代码约定，不是环境配置。修改时需同时验证不同模型的实际上下文限制。
+自动压缩触发线为当前模型上下文窗口的 80%。Ollama 模型优先从所有运行实例的 `/api/ps` 读取实际 `context_length` 并取最小值；外部模型通过 `MODEL_CONTEXT_WINDOWS` 按模型名配置。无法解析时使用 `MODEL_CONTEXT_WINDOW_FALLBACK` 的保守值。
+
+压缩后的会话摘要与近期消息仍限制在 20K，其中结构化摘要最多 12K、近期完整消息最多 8K。
 
 ### 2.2 自动压缩
 
@@ -83,7 +85,7 @@ data/memory/users/{user_id}/
 | `GET /memory/settings` | 读取当前用户长期记忆开关 |
 | `PUT /memory/settings` | 更新当前用户长期记忆开关 |
 
-Agent 不再注册 `memory_find`、`memory_grep`、`memory_read`、`remember_memory` 和 `forget_memory`。长期记忆通过系统上下文固定注入。
+Agent 不再注册文件型记忆搜索工具。长期记忆通过系统上下文固定注入；用户明确要求记住稳定信息时，Agent 调用 `save_user_memory` 立即合并更新 `USER_PROFILE.md`。
 
 ## 5. 自动提取
 
@@ -96,7 +98,7 @@ Agent 不再注册 `memory_find`、`memory_grep`、`memory_read`、`remember_mem
 5. 允许保持不变，禁止为了“有记忆”强行新增内容。
 6. 更新处理进度，避免重复扫描全部历史。
 
-自动提取只更新 `USER_PROFILE.md`，不修改用户 `AGENTS.md`，也不提供手动编辑 `USER_PROFILE.md` 的接口。任务失败记录日志但不影响已完成的对话响应；应用退出时等待或关闭调度任务。
+自动提取只更新 `USER_PROFILE.md`，不修改用户 `AGENTS.md`，也不提供手动编辑 `USER_PROFILE.md` 的接口。普通对话仍按空闲 10 分钟且至少有 3 条有效用户消息的条件提取；显式记忆不等待后台任务。任务失败记录日志但不影响已完成的对话响应；应用退出时等待或关闭调度任务。
 
 ## 6. 安全与隐私
 

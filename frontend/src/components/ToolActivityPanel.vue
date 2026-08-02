@@ -437,10 +437,16 @@ const getShellDetail = (activity) => {
 
 <style lang="scss" scoped>
 .tool-activity-panel {
+  box-sizing: border-box;
+  width: calc(100% - 16px);
+  min-width: 0;
+  max-width: calc(100% - 16px);
   margin: 0 0 8px 16px;
   color: var(--text-tertiary, #747682);
 
   @media (max-width: 768px) {
+    width: 100%;
+    max-width: 100%;
     margin: 0 0 8px;
   }
 }
@@ -505,13 +511,22 @@ const getShellDetail = (activity) => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 3px;
+}
+
+.activity-item {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .activity-line {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .activity-line .activity-row {
@@ -580,6 +595,8 @@ const getShellDetail = (activity) => {
 }
 
 .shell-detail {
+  min-width: 0;
+  max-width: 100%;
   margin: 4px 0 8px;
   overflow: hidden;
   border: 1px solid var(--border-color, #dedede);
@@ -595,17 +612,20 @@ const getShellDetail = (activity) => {
 }
 
 .shell-detail pre {
-  max-height: 320px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   margin: 0;
   padding: 6px 12px 12px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   color: var(--text-primary, #4d4d4d);
   background: transparent;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: normal;
-  white-space: pre-wrap;
+  white-space: pre;
 }
 
 @media (hover: none) and (pointer: coarse) {

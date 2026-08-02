@@ -82,12 +82,87 @@
         class="preview-body markdown-body"
         v-html="renderedMarkdownHtml(activeTab)"
       ></div>
-      <div v-else-if="isImageTab(activeTab)" class="preview-image-stage">
-        <img
-          class="preview-image"
-          :src="activeTab.image_url"
-          :alt="activeTab.download_name || fileNameOf(activeTab.path)"
-        />
+      <div
+        v-else-if="isImageTab(activeTab)"
+        ref="imageStage"
+        class="preview-image-stage"
+        :class="{ dragging: imageDragging }"
+        @wheel.prevent="handleImageWheel"
+        @pointerdown="startImageDrag"
+        @pointermove="moveImage"
+        @pointerup="stopImageDrag"
+        @pointercancel="stopImageDrag"
+      >
+        <div class="preview-image-position" :style="imagePositionStyle">
+          <img
+            ref="previewImage"
+            class="preview-image"
+            :src="activeTab.image_url"
+            :alt="activeTab.download_name || fileNameOf(activeTab.path)"
+            :style="imageStyle"
+            draggable="false"
+            @load="handleImageLoad"
+          />
+        </div>
+        <div class="preview-image-controls" @pointerdown.stop>
+          <button
+            type="button"
+            class="preview-image-control"
+            aria-label="缩小图片"
+            v-tooltip="'缩小'"
+            @click="changeImageZoom(-IMAGE_ZOOM_STEP)"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="10.5" cy="10.5" r="6.5"></circle>
+              <line x1="6.5" y1="10.5" x2="14.5" y2="10.5"></line>
+              <line x1="15.5" y1="15.5" x2="21" y2="21"></line>
+            </svg>
+          </button>
+          <input
+            class="preview-image-range"
+            type="range"
+            :min="IMAGE_ZOOM_MIN"
+            :max="IMAGE_ZOOM_MAX"
+            :step="IMAGE_ZOOM_STEP"
+            :value="imageZoom"
+            aria-label="图片缩放比例"
+            @input="setImageZoom($event.target.value)"
+          />
+          <button
+            type="button"
+            class="preview-image-control"
+            aria-label="放大图片"
+            v-tooltip="'放大'"
+            @click="changeImageZoom(IMAGE_ZOOM_STEP)"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="10.5" cy="10.5" r="6.5"></circle>
+              <line x1="6.5" y1="10.5" x2="14.5" y2="10.5"></line>
+              <line x1="10.5" y1="6.5" x2="10.5" y2="14.5"></line>
+              <line x1="15.5" y1="15.5" x2="21" y2="21"></line>
+            </svg>
+          </button>
+          <span class="preview-image-zoom">{{ imageZoom }}%</span>
+          <span class="preview-image-divider" aria-hidden="true"></span>
+          <button type="button" class="preview-image-action" @click="fitImage">适应窗口</button>
+          <button type="button" class="preview-image-action" @click="showActualImageSize">1:1</button>
+        </div>
       </div>
       <pre v-else class="preview-code hljs"><code
         :class="codeLanguageClass(activeTab)"
@@ -99,7 +174,7 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import hljs from 'highlight.js'
 import { useChatStore } from '../stores/chat'
 import { renderMarkdown } from '../utils/markdown'
@@ -109,6 +184,20 @@ import { escapeHtml } from '../utils/html'
 
 const chatStore = useChatStore()
 const toast = useToast()
+const IMAGE_ZOOM_MIN = 10
+const IMAGE_ZOOM_MAX = 300
+const IMAGE_ZOOM_STEP = 1
+
+const imageStage = ref(null)
+const previewImage = ref(null)
+const imageZoom = ref(100)
+const imageOffset = ref({ x: 0, y: 0 })
+const imageNaturalSize = ref({ width: 0, height: 0 })
+const imageDragging = ref(false)
+const imageFitMode = ref(true)
+let imageDragStart = null
+let observedImageStage = null
+let imageStageResizeObserver = null
 
 const activeTab = computed(() => {
   return chatStore.previewTabs.find((tab) => tab.path === chatStore.previewActivePath) || null
@@ -118,9 +207,9 @@ const fileNameOf = (path) => (path ? path.replace(/\\/g, '/').split('/').pop() |
 const tabNameOf = (tab) => tab?.download_name || fileNameOf(tab?.path)
 
 const workspacePathOf = (path) => {
-  if (!path) return '工作台'
+  if (!path) return '/'
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '')
-  return `工作台 / ${normalized}`
+  return `/${normalized}`
 }
 
 const previewPathOf = (tab) => {
@@ -129,6 +218,135 @@ const previewPathOf = (tab) => {
 
 const isMarkdownTab = (tab) => (tab?.language || '').toLowerCase() === 'markdown'
 const isImageTab = (tab) => tab?.preview_type === 'image'
+
+const imagePositionStyle = computed(() => ({
+  transform: `translate(${imageOffset.value.x}px, ${imageOffset.value.y}px)`,
+}))
+
+const imageStyle = computed(() => ({
+  transform: `translate(-50%, -50%) scale(${imageZoom.value / 100})`,
+}))
+
+const clampImageZoom = (value) => {
+  const zoom = Number(value)
+  return Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, Number.isFinite(zoom) ? zoom : 100))
+}
+
+const clampImageOffset = () => {
+  if (!imageStage.value || !imageNaturalSize.value.width || !imageNaturalSize.value.height) return
+  const scale = imageZoom.value / 100
+  const overflowX = Math.max(
+    0,
+    (imageNaturalSize.value.width * scale - imageStage.value.clientWidth) / 2,
+  )
+  const overflowY = Math.max(
+    0,
+    (imageNaturalSize.value.height * scale - imageStage.value.clientHeight) / 2,
+  )
+  imageOffset.value = {
+    x: Math.min(overflowX, Math.max(-overflowX, imageOffset.value.x)),
+    y: Math.min(overflowY, Math.max(-overflowY, imageOffset.value.y)),
+  }
+}
+
+const setImageZoom = (value) => {
+  imageFitMode.value = false
+  imageZoom.value = clampImageZoom(value)
+  clampImageOffset()
+}
+
+const changeImageZoom = (change) => {
+  setImageZoom(imageZoom.value + change)
+}
+
+const fitImage = () => {
+  if (!imageStage.value || !imageNaturalSize.value.width || !imageNaturalSize.value.height) return
+  const availableWidth = Math.max(1, imageStage.value.clientWidth - 48)
+  const availableHeight = Math.max(1, imageStage.value.clientHeight - 96)
+  const scale = Math.min(
+    1,
+    availableWidth / imageNaturalSize.value.width,
+    availableHeight / imageNaturalSize.value.height,
+  )
+  imageZoom.value = clampImageZoom(Math.floor(scale * 100))
+  imageOffset.value = { x: 0, y: 0 }
+  imageFitMode.value = true
+}
+
+const showActualImageSize = () => {
+  imageZoom.value = 100
+  imageOffset.value = { x: 0, y: 0 }
+  imageFitMode.value = false
+}
+
+const handleImageLoad = (event) => {
+  imageNaturalSize.value = {
+    width: event.target.naturalWidth,
+    height: event.target.naturalHeight,
+  }
+  fitImage()
+}
+
+const handleImageWheel = (event) => {
+  if (event.ctrlKey || event.metaKey) {
+    changeImageZoom(event.deltaY < 0 ? IMAGE_ZOOM_STEP : -IMAGE_ZOOM_STEP)
+    return
+  }
+  const deltaX = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX
+  const deltaY = event.shiftKey ? 0 : event.deltaY
+  imageOffset.value = {
+    x: imageOffset.value.x - deltaX,
+    y: imageOffset.value.y - deltaY,
+  }
+  clampImageOffset()
+}
+
+const startImageDrag = (event) => {
+  if (event.button !== 0) return
+  imageDragging.value = true
+  imageDragStart = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    offsetX: imageOffset.value.x,
+    offsetY: imageOffset.value.y,
+  }
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+const moveImage = (event) => {
+  if (!imageDragging.value || !imageDragStart || event.pointerId !== imageDragStart.pointerId) return
+  imageOffset.value = {
+    x: imageDragStart.offsetX + event.clientX - imageDragStart.clientX,
+    y: imageDragStart.offsetY + event.clientY - imageDragStart.clientY,
+  }
+  clampImageOffset()
+}
+
+const stopImageDrag = (event) => {
+  if (!imageDragStart || event.pointerId !== imageDragStart.pointerId) return
+  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+  imageDragging.value = false
+  imageDragStart = null
+}
+
+const observeImageStage = () => {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!imageStageResizeObserver) {
+    imageStageResizeObserver = new ResizeObserver(() => {
+      if (imageFitMode.value) {
+        fitImage()
+      } else {
+        clampImageOffset()
+      }
+    })
+  }
+  if (observedImageStage) imageStageResizeObserver.unobserve(observedImageStage)
+  observedImageStage = imageStage.value
+  if (observedImageStage) imageStageResizeObserver.observe(observedImageStage)
+}
 
 const normalizedCodeLanguage = (tab) => {
   const language = (tab?.language || '').toLowerCase()
@@ -220,9 +438,27 @@ watch(
   activeTab,
   (tab) => {
     if (tab) fetchPreviewIfNeeded(tab)
+    imageZoom.value = 100
+    imageOffset.value = { x: 0, y: 0 }
+    imageNaturalSize.value = { width: 0, height: 0 }
+    imageFitMode.value = true
+    nextTick(() => {
+      observeImageStage()
+      if (isImageTab(tab) && previewImage.value?.complete) {
+        imageNaturalSize.value = {
+          width: previewImage.value.naturalWidth,
+          height: previewImage.value.naturalHeight,
+        }
+        fitImage()
+      }
+    })
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  imageStageResizeObserver?.disconnect()
+})
 </script>
 
 <style lang="scss" scoped>
@@ -386,33 +622,119 @@ watch(
 }
 
 .preview-image-stage {
+  position: relative;
   box-sizing: border-box;
-  display: flex;
   width: 100%;
+  height: 100%;
   min-height: 100%;
-  padding: 24px;
-  align-items: center;
-  justify-content: center;
-  background:
-    linear-gradient(45deg, rgba(0, 0, 0, 0.025) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(0, 0, 0, 0.025) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(0, 0, 0, 0.025) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(0, 0, 0, 0.025) 75%);
-  background-position:
-    0 0,
-    0 8px,
-    8px -8px,
-    -8px 0;
-  background-size: 16px 16px;
+  overflow: hidden;
+  background: var(--bg-secondary, #f3f4f6);
+  container-type: inline-size;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+
+  &.dragging {
+    cursor: grabbing;
+  }
+}
+
+.preview-image-position {
+  position: absolute;
+  top: 50%;
+  left: 50%;
 }
 
 .preview-image {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  max-width: 100%;
-  max-height: calc(var(--app-height, 100vh) - 136px);
+  max-width: none;
+  max-height: none;
   border-radius: 8px;
-  object-fit: contain;
+  transform-origin: center;
   box-shadow: 0 10px 32px rgba(17, 24, 39, 0.12);
+  pointer-events: none;
+}
+
+.preview-image-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 10px;
+  background: var(--app-page-bg, #fafafc);
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.12);
+  transform: translateX(-50%);
+  cursor: default;
+}
+
+.preview-image-control,
+.preview-image-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary, #666);
+  background: transparent;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary, #333);
+    background: var(--bg-secondary, #f0f0f0);
+  }
+}
+
+.preview-image-control {
+  width: 30px;
+  flex-shrink: 0;
+
+  svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
+.preview-image-action {
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.preview-image-range {
+  width: 92px;
+  accent-color: var(--primary-color, #4f46e5);
+  cursor: pointer;
+}
+
+.preview-image-zoom {
+  width: 42px;
+  color: var(--text-primary, #333);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-image-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-color, #ddd);
+}
+
+@container (max-width: 360px) {
+  .preview-image-range {
+    display: none;
+  }
 }
 
 .preview-body {

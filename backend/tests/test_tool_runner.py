@@ -133,3 +133,42 @@ async def test_shell_tool_treats_none_output_as_failure(tmp_path: Path, monkeypa
     assert payload["success"] is False
     assert payload["summary"] == "Shell执行失败"
     assert payload["error"] == "Shell执行器未返回有效结果"
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_replays_result_for_same_tool_call_id(tmp_path: Path, monkeypatch) -> None:
+    """恢复执行同一工具调用时应重放结果，不得再次调用底层执行器。"""
+    old_root = workspace_manager.root
+    workspace_manager.root = tmp_path.resolve()
+    monkeypatch.setattr(settings, "agent_tools_enabled", True)
+    monkeypatch.setattr(settings, "shell_tool_enabled", True)
+    invocation_count = 0
+
+    async def count_invocation(*args, **kwargs):
+        nonlocal invocation_count
+        invocation_count += 1
+        return "done"
+
+    monkeypatch.setattr(shell_tool_module.ShellTool, "ainvoke", count_invocation)
+    session_id = "4fa78a24-8775-4786-b84d-27b86c5b879c"
+    state = {
+        "user_id": 1,
+        "session_id": session_id,
+        "workspace_path": str(tmp_path / "1" / session_id),
+    }
+    try:
+        first_result = await shell_tool_module.execute_shell.coroutine(
+            commands="pwd",
+            state=state,
+            tool_call_id="call-shell-idempotent",
+        )
+        replayed_result = await shell_tool_module.execute_shell.coroutine(
+            commands="pwd",
+            state=state,
+            tool_call_id="call-shell-idempotent",
+        )
+    finally:
+        workspace_manager.root = old_root
+
+    assert invocation_count == 1
+    assert replayed_result == first_result

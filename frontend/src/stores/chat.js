@@ -51,6 +51,9 @@ export const useChatStore = defineStore('chat', () => {
     messages: [],
     isLoading: false,
     isStreaming: false,
+    hasUnreadCompletion: false,
+    compactionStatus: '',
+    compactionAfterMessageId: '',
     awaitingApproval: false,
     pendingApproval: null,
     hasLoadedMessages: false,
@@ -89,6 +92,9 @@ export const useChatStore = defineStore('chat', () => {
     }
     if (typeof state.historyLoadError !== 'string') {
       state.historyLoadError = ''
+    }
+    if (typeof state.hasUnreadCompletion !== 'boolean') {
+      state.hasUnreadCompletion = false
     }
     return state
   }
@@ -209,6 +215,14 @@ export const useChatStore = defineStore('chat', () => {
     return getConversationState(activeConversationKey.value)?.isStreaming || false
   })
 
+  const compactionStatus = computed(() => {
+    return getConversationState(activeConversationKey.value)?.compactionStatus || ''
+  })
+
+  const compactionAfterMessageId = computed(() => {
+    return getConversationState(activeConversationKey.value)?.compactionAfterMessageId || ''
+  })
+
   const awaitingApproval = computed(() => {
     return getConversationState(activeConversationKey.value)?.awaitingApproval || false
   })
@@ -257,10 +271,11 @@ export const useChatStore = defineStore('chat', () => {
 
     const existing = state.previewTabs.find((tab) => tab.path === path)
     if (existing) {
-      // 已有 tab：若之前没拿到正文而这次带来了正文，则补上
-      if (content !== null && !existing.content) {
+      // 同一路径可能被工具重复写入，每次带回的正文都应覆盖旧预览
+      if (content !== null) {
         existing.content = content
         existing.language = language || existing.language
+        existing.error = ''
       }
       if (image_url) {
         existing.image_url = image_url
@@ -362,6 +377,48 @@ export const useChatStore = defineStore('chat', () => {
     const state = ensureConversationState(conversationKey)
     if (state) {
       state.isStreaming = streaming
+      if (streaming) {
+        state.hasUnreadCompletion = false
+      }
+    }
+  }
+
+  const markConversationComplete = (conversationKey, viewed = false) => {
+    const state = ensureConversationState(conversationKey)
+    if (state) {
+      state.hasUnreadCompletion = !viewed
+    }
+  }
+
+  const clearConversationCompletion = (conversationKey) => {
+    const state = getConversationState(conversationKey)
+    if (state) {
+      state.hasUnreadCompletion = false
+    }
+  }
+
+  const isConversationStreaming = (conversationKey) => {
+    return Boolean(getConversationState(conversationKey)?.isStreaming)
+  }
+
+  const hasConversationUnreadCompletion = (conversationKey) => {
+    return Boolean(getConversationState(conversationKey)?.hasUnreadCompletion)
+  }
+
+  const setConversationCompactionStatus = (
+    conversationKey,
+    status,
+    afterMessageId = null,
+  ) => {
+    const state = ensureConversationState(conversationKey)
+    if (!state) return
+
+    state.compactionStatus = status
+    if (afterMessageId !== null) {
+      state.compactionAfterMessageId = afterMessageId
+    }
+    if (!status) {
+      state.compactionAfterMessageId = ''
     }
   }
 
@@ -388,12 +445,11 @@ export const useChatStore = defineStore('chat', () => {
     selectConversationKey(conversationId)
 
     const conversation = conversations.value.find((conv) => conv.id === conversationId)
-    const state = getConversationState(conversationId, false)
+    const state = ensureConversationState(conversationId)
+    state.hasUnreadCompletion = false
 
     if (conversation && !(state?.isStreaming || state?.hasLoadedMessages || state?.messages.length > 0)) {
       await loadConversationMessagesFromDB(conversationId)
-    } else {
-      ensureConversationState(conversationId)
     }
 
     // 触发输入框聚焦
@@ -642,16 +698,21 @@ export const useChatStore = defineStore('chat', () => {
 
   const toggleMessageReasoning = (
     messageId,
-    reasoningId,
+    reasoningId = null,
     conversationKey = activeConversationKey.value,
   ) => {
     const state = getConversationState(conversationKey)
     const message = state?.messages.find((item) => item.id === messageId)
-    const segment = message?.reasoning?.find((item) => item.reasoning_id === reasoningId)
-    if (!segment) return
+    const segments = reasoningId
+      ? message?.reasoning?.filter((item) => item.reasoning_id === reasoningId)
+      : message?.reasoning
+    if (!segments?.length) return
 
-    segment.collapsed = !segment.collapsed
-    segment.user_toggled = true
+    const collapsed = !segments.every((segment) => segment.collapsed)
+    segments.forEach((segment) => {
+      segment.collapsed = collapsed
+      segment.user_toggled = true
+    })
   }
 
   const setMessageFeedbackState = (
@@ -669,12 +730,30 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const addToolEventToLastMessage = (toolEvent, conversationKey = activeConversationKey.value) => {
+    const state = getConversationState(conversationKey)
     const lastMessage = getLastMessage(conversationKey)
     if (lastMessage && lastMessage.sender === 'assistant') {
       if (!Array.isArray(lastMessage.toolEvents)) {
         lastMessage.toolEvents = []
       }
       lastMessage.toolEvents.push(toolEvent)
+    }
+
+    const payload = toolEvent?.payload
+    if (
+      state &&
+      toolEvent?.eventType === 'tool_result' &&
+      payload?.tool_name === 'write_file' &&
+      payload.preview_path &&
+      payload.preview_content !== undefined
+    ) {
+      const previewTab = state.previewTabs.find((tab) => tab.path === payload.preview_path)
+      if (previewTab) {
+        previewTab.content = payload.preview_content
+        previewTab.language = payload.preview_language || previewTab.language
+        previewTab.loading = false
+        previewTab.error = ''
+      }
     }
   }
 
@@ -912,6 +991,8 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     isLoading,
     isStreaming,
+    compactionStatus,
+    compactionAfterMessageId,
     awaitingApproval,
     pendingApproval,
     historyLoadError,
@@ -940,6 +1021,11 @@ export const useChatStore = defineStore('chat', () => {
     setCurrentSessionId,
     setConversationLoading,
     setConversationStreaming,
+    markConversationComplete,
+    clearConversationCompletion,
+    isConversationStreaming,
+    hasConversationUnreadCompletion,
+    setConversationCompactionStatus,
     getConversationMessages,
     getLastMessage,
     addNewConversationToList,

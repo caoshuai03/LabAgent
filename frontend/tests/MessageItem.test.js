@@ -8,11 +8,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MessageItem from '../src/components/MessageItem.vue'
+import router from '../src/router'
 import { useChatStore } from '../src/stores/chat'
 
 describe('MessageItem', () => {
   let pinia
   let writeText
+  let scrollIntoView
 
   beforeEach(() => {
     pinia = createPinia()
@@ -26,6 +28,11 @@ describe('MessageItem', () => {
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText },
+    })
+    scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
     })
   })
 
@@ -150,5 +157,78 @@ describe('MessageItem', () => {
 
     await wrapper.find('.sources-toggle').trigger('click')
     expect(wrapper.findAll('.source-item')).toHaveLength(5)
+  })
+
+  it('引用来源显示文件名和章节路径并保留摘要原文', () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'assistant-message-source-path',
+          sender: 'assistant',
+          content: '回答内容',
+          sources: [
+            {
+              file_name: '04-线性神经网络.md',
+              course_name: '动手学深度学习',
+              chapter_name: '线性回归',
+              section_name: '损失函数',
+              snippet: '## 平方损失用于衡量预测值与真实值之间的误差。',
+            },
+          ],
+        },
+      },
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+        },
+      },
+    })
+
+    expect(wrapper.find('.source-index').text()).toBe('[1]')
+    expect(wrapper.find('.source-name').text()).toBe('04-线性神经网络.md / 线性回归 / 损失函数')
+    expect(wrapper.find('.source-snippet').text()).toBe(
+      '## 平方损失用于衡量预测值与真实值之间的误差。',
+    )
+  })
+
+  it('正文以圆形序号展示引用，点击后滚动到对应引用来源', async () => {
+    const routerPush = vi.spyOn(router, 'push').mockResolvedValue()
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'assistant-message-citation-link',
+          sender: 'assistant',
+          content: '动量法可以加速收敛。[资料S026e0624]',
+          sources: [
+            {
+              citation_id: 'S026e0624',
+              file_name: '11-优化算法.md',
+              snippet: '实际实验让我们来看看动量法如何运作。',
+            },
+          ],
+        },
+      },
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+        },
+      },
+    })
+
+    await vi.waitFor(() => expect(wrapper.find('.citation-index').exists()).toBe(true))
+    expect(wrapper.find('.citation-index').text()).toBe('1')
+    expect(wrapper.find('.citation-index').attributes('aria-label')).toBe('查看引用来源 1')
+
+    await wrapper.find('.citation-index').trigger('click')
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    expect(routerPush).not.toHaveBeenCalled()
+
+    await wrapper.find('.source-item').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({
+      name: 'Knowledge',
+      query: { file_name: '11-优化算法.md' },
+    })
   })
 })

@@ -15,6 +15,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 import app.graph.chat_graph as chat_graph
 from app.services.skill_service import SkillError, skill_catalog, skill_service
+from app.tools.result import parse_result_envelope
+from app.tools.skill_tools import activate_skill
 from app.tools.workspace import workspace_manager
 
 
@@ -109,6 +111,39 @@ def test_activation_is_idempotent_and_limited(
         skill_service.activate("second-skill", activations)
 
 
+def test_active_skill_is_excluded_from_catalog_prompt(skill_environment: Path) -> None:
+    """已激活 Skill 不应继续出现在要求模型激活的目录中。"""
+    _write_skill(skill_environment, "first-skill")
+    _write_skill(skill_environment, "second-skill")
+    skill_catalog.refresh()
+    activations, _, _ = skill_service.activate("first-skill", [])
+
+    catalog_prompt = skill_catalog.catalog_prompt({"first-skill"})
+    active_prompt = skill_service.active_prompt(activations)
+
+    assert "first-skill" not in catalog_prompt
+    assert "second-skill" in catalog_prompt
+    assert "不要再次调用 activate_skill" in active_prompt
+
+
+@pytest.mark.asyncio
+async def test_duplicate_skill_activation_is_internal(skill_environment: Path) -> None:
+    """模型重复激活已选 Skill 时，不应再向前端暴露工具结果。"""
+    _write_skill(skill_environment, "report-skill")
+    skill_catalog.refresh()
+    activations, _, _ = skill_service.activate("report-skill", [])
+
+    result = await activate_skill.coroutine(
+        name="report-skill",
+        state={"activated_skills": activations},
+        tool_call_id="duplicate-skill-call",
+    )
+
+    payload = parse_result_envelope(result)
+    assert payload["success"] is True
+    assert payload["internal"] is True
+
+
 class FakeSkillModel(BaseChatModel):
     """先激活 Skill，再记录第二轮系统提示词的测试模型。"""
 
@@ -179,6 +214,7 @@ async def test_graph_activates_skill_and_injects_body(
         "user_id": 1,
         "session_id": session_id,
         "model_name": None,
+        "model_context_window": 32_768,
         "agent_run_id": uuid.uuid4().hex,
         "tool_round": 0,
         "tool_call_signatures": {},
@@ -232,6 +268,7 @@ async def test_graph_uses_preselected_skill_before_first_model_call(
         "user_id": 1,
         "session_id": session_id,
         "model_name": None,
+        "model_context_window": 32_768,
         "agent_run_id": run_id,
         "tool_round": 0,
         "tool_call_signatures": {},

@@ -67,25 +67,32 @@
           @decision="emit('approval-decision', $event)"
         />
 
-        <div v-if="message.sender === 'assistant' && sources.length > 0" class="sources-panel">
+        <div
+          v-if="message.sender === 'assistant' && sources.length > 0"
+          ref="sourcesPanelRef"
+          class="sources-panel"
+        >
           <div class="sources-title">引用来源</div>
           <div class="sources-list">
-            <div
+            <button
               v-for="(source, idx) in visibleSources"
-              :key="`source-${idx}`"
+              :key="source.citation_id || `source-${idx}`"
+              type="button"
               class="source-item"
+              :data-source-index="idx + 1"
+              @click="openSource(source)"
             >
               <div class="source-header">
-                <span class="source-index">{{ idx + 1 }}</span>
-                <span class="source-name" v-tooltip="source.file_name || '未知来源'">
-                  {{ source.file_name || '未知来源' }}
+                <span class="source-index">[{{ idx + 1 }}]</span>
+                <span class="source-name" v-tooltip="formatSourceName(source)">
+                  {{ formatSourceName(source) }}
                 </span>
                 <span v-if="source.score !== undefined && source.score !== null" class="source-score">
                   {{ formatScore(source.score) }}
                 </span>
               </div>
               <div v-if="source.snippet" class="source-snippet">{{ source.snippet }}</div>
-            </div>
+            </button>
           </div>
           <button
             v-if="hasCollapsedSources"
@@ -149,6 +156,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import router from '../router'
 import { useChatStore } from '../stores/chat'
 import { renderMarkdown, stripTrailingArtifactCodeBlock } from '../utils/markdown'
 import { escapeHtml } from '../utils/html'
@@ -168,6 +176,7 @@ const props = defineProps({
 
 const chatStore = useChatStore()
 const messageTextRef = ref(null)
+const sourcesPanelRef = ref(null)
 const copied = ref(false)
 const sourcesExpanded = ref(false)
 const DEFAULT_VISIBLE_SOURCE_COUNT = 5
@@ -233,8 +242,8 @@ const openImagePreview = (image) => {
   })
 }
 
-const handleReasoningToggle = (reasoningId) => {
-  chatStore.toggleMessageReasoning(props.message.id, reasoningId)
+const handleReasoningToggle = () => {
+  chatStore.toggleMessageReasoning(props.message.id)
 }
 
 const showInlineApproval = computed(() => {
@@ -247,6 +256,19 @@ const formatScore = (score) => {
   const value = Number(score)
   if (Number.isNaN(value)) return ''
   return value.toFixed(2)
+}
+
+const formatSourceName = (source) => {
+  const titlePath = [source.file_name, source.chapter_name, source.section_name].filter(Boolean)
+  return titlePath.length > 0 ? titlePath.join(' / ') : '未知来源'
+}
+
+const openSource = (source) => {
+  if (!source.file_name) return
+  void router.push({
+    name: 'Knowledge',
+    query: { file_name: source.file_name },
+  })
 }
 
 const formatContent = (content) => {
@@ -293,6 +315,13 @@ const handleCopy = async () => {
 }
 
 const handleCodeBlockClick = async (event) => {
+  const citationLink = event.target.closest('.citation-index')
+  if (citationLink) {
+    event.preventDefault()
+    await scrollToCitationSource(Number(citationLink.dataset.citationIndex))
+    return
+  }
+
   // 正文中的产物超链接：点击在右侧预览侧栏打开对应文件
   const artifactLink = event.target.closest('.artifact-link')
   if (artifactLink) {
@@ -331,6 +360,71 @@ const handleCodeBlockClick = async (event) => {
   } catch (error) {
     console.error('复制代码失败:', error)
   }
+}
+
+const scrollToCitationSource = async (sourceIndex) => {
+  if (!Number.isInteger(sourceIndex) || sourceIndex < 1 || sourceIndex > sources.value.length) return
+  if (sourceIndex > DEFAULT_VISIBLE_SOURCE_COUNT && !sourcesExpanded.value) {
+    sourcesExpanded.value = true
+    await nextTick()
+  }
+
+  const sourceItem = sourcesPanelRef.value?.querySelector(`[data-source-index="${sourceIndex}"]`)
+  if (!sourceItem) return
+  sourceItem.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  sourceItem.classList.remove('source-item-guided')
+  requestAnimationFrame(() => sourceItem.classList.add('source-item-guided'))
+  setTimeout(() => sourceItem.classList.remove('source-item-guided'), 1400)
+}
+
+const decorateCitationLinks = () => {
+  if (!messageTextRef.value || props.message.sender !== 'assistant') return
+  const citationIndexes = new Map(
+    sources.value
+      .map((source, index) => [source.citation_id, index + 1])
+      .filter(([citationId]) => citationId),
+  )
+  if (citationIndexes.size === 0) return
+
+  const walker = document.createTreeWalker(messageTextRef.value, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (node.parentElement?.closest('a, button, code, pre')) return NodeFilter.FILTER_REJECT
+      return Array.from(citationIndexes.keys()).some((id) =>
+        node.nodeValue?.includes(`[资料${id}]`),
+      )
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+    },
+  })
+  const targets = []
+  let current = walker.nextNode()
+  while (current) {
+    targets.push(current)
+    current = walker.nextNode()
+  }
+
+  targets.forEach((textNode) => {
+    const pattern = /\[资料([^\]]+)\]/g
+    const fragment = document.createDocumentFragment()
+    let lastIndex = 0
+    let match
+    while ((match = pattern.exec(textNode.nodeValue)) !== null) {
+      const sequence = citationIndexes.get(match[1])
+      if (!sequence) continue
+      fragment.appendChild(document.createTextNode(textNode.nodeValue.slice(lastIndex, match.index)))
+      const index = document.createElement('button')
+      index.type = 'button'
+      index.className = 'citation-index'
+      index.dataset.citationIndex = String(sequence)
+      index.setAttribute('aria-label', `查看引用来源 ${sequence}`)
+      index.textContent = String(sequence)
+      fragment.appendChild(index)
+      lastIndex = match.index + match[0].length
+    }
+    if (lastIndex === 0) return
+    fragment.appendChild(document.createTextNode(textNode.nodeValue.slice(lastIndex)))
+    textNode.parentNode.replaceChild(fragment, textNode)
+  })
 }
 
 // 从本条消息的 write_file 工具事件里取回产物的整文件正文与语言（若 SSE 已带），
@@ -484,6 +578,7 @@ onMounted(() => {
   nextTick(() => {
     addCopyButtons()
     decorateArtifactLinks()
+    decorateCitationLinks()
   })
 })
 
@@ -493,8 +588,15 @@ watch(
     nextTick(() => {
       addCopyButtons()
       decorateArtifactLinks()
+      decorateCitationLinks()
     })
   },
+  { flush: 'post' },
+)
+
+watch(
+  () => sources.value.map((source) => source.citation_id || '').join(','),
+  () => nextTick(decorateCitationLinks),
   { flush: 'post' },
 )
 
@@ -508,6 +610,7 @@ watch(
   },
   { flush: 'post' },
 )
+
 </script>
 
 <style lang="scss" scoped>
@@ -1036,6 +1139,29 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 100%;
+  padding: 4px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background: var(--hover-bg, #f3f4f6);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color, #90138b);
+    outline-offset: 2px;
+  }
+
+  &.source-item-guided {
+    background: var(--bg-hover, #e5e5e5);
+  }
 }
 
 .source-header {
@@ -1047,7 +1173,6 @@ watch(
 
 .source-index {
   flex-shrink: 0;
-  width: 18px;
   color: var(--text-secondary, #6b7280);
   font-size: 12px;
   text-align: center;
@@ -1072,11 +1197,39 @@ watch(
   font-size: 12px;
   color: var(--text-secondary, #6b7280);
   line-height: 1.5;
-  padding-left: 26px;
+  padding-left: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.message-text :deep(.citation-index) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-hover, #e5e5e5);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: 0.08em;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-active, #ebebeb);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--text-secondary, #6e6e80);
+    outline-offset: 2px;
+  }
 }
 
 .sources-toggle {

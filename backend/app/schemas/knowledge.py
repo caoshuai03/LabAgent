@@ -15,6 +15,8 @@ class KbFileVO(BaseModel):
     file_name: str | None
     url: str | None
     status: str
+    source_url: str | None = None
+    license: str | None = None
     task_id: int | None = None
     stage: str | None = None
     total_chunks: int | None = None
@@ -45,6 +47,10 @@ class KbUploadTaskVO(BaseModel):
 class KbSourceVO(BaseModel):
     """RAG 引用来源返回体——供对话结果展示引用出处，全字段蛇形。"""
 
+    citation_id: str | None = None
     file_name: str | None
     snippet: str
+    course_name: str | None = None
+    chapter_name: str | None = None
+    section_name: str | None = None
     score: float | None = None

@@ -65,9 +65,13 @@ export const knowledgeApi = {
   },
 
   /**
-   * 查询文件列表（默认全量返回）
+   * 分页查询文件列表
    * @param {Object} params - 查询参数
    * @param {string} [params.file_name] - 文件名（可选，用于搜索）
+   * @param {number} [params.page] - 页码
+   * @param {20|50|100} [params.page_size] - 每页文件数量
+   * @param {'file_name'|'total_chunks'|'create_time'} [params.sort_by] - 排序字段
+   * @param {'asc'|'desc'} [params.sort_order] - 排序方向
    * @returns {Promise} 文件列表数据
    */
   getFileList: (params) => {

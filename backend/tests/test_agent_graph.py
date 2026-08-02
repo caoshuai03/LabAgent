@@ -114,6 +114,7 @@ def _graph_input(session_id: str) -> dict[str, Any]:
         "user_id": 1,
         "session_id": session_id,
         "model_name": None,
+        "model_context_window": 32_768,
         "agent_run_id": uuid.uuid4().hex,
         "tool_round": 0,
         "tool_call_signatures": {},

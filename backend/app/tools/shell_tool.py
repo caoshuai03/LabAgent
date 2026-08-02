@@ -3,6 +3,7 @@
 @date: 2026-07-15 00:41
 @description: LangChain ShellTool 受控 Tool Runner 适配
 """
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 
 from app.core.config import settings
+from app.tools.idempotency import tool_idempotency_store
 from app.tools.policy import tool_policy
 from app.tools.result import result_envelope, safe_stream_writer, truncate_text
 from app.tools.workspace import WorkspaceError, workspace_manager
@@ -57,17 +59,19 @@ async def execute_shell(
     state: Annotated[dict[str, Any], InjectedState] = None,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
-    """Execute commands inside the current isolated session workspace sandbox."""
+    """Command-line execution tool for the current isolated session workspace sandbox."""
     started = time.monotonic()
     writer = safe_stream_writer()
     current_state = state or {}
+    workspace: Path | None = None
+    arguments = {"commands": commands}
+    idempotency_claimed = False
     try:
         workspace = workspace_manager.ensure_workspace(
             int(current_state["user_id"]), str(current_state["session_id"])
         )
         if Path(str(current_state.get("workspace_path", workspace))).resolve() != workspace:
             raise WorkspaceError("工作区上下文不匹配")
-        arguments = {"commands": commands}
         decision = tool_policy.evaluate(
             "execute_shell",
             arguments,
@@ -75,6 +79,24 @@ async def execute_shell(
         )
         if not decision.allowed:
             raise WorkspaceError(decision.message)
+
+        idempotency = await asyncio.to_thread(
+            tool_idempotency_store.begin,
+            workspace,
+            "execute_shell",
+            tool_call_id,
+            arguments,
+        )
+        if idempotency.cached_result is not None:
+            return idempotency.cached_result
+        if idempotency.uncertain:
+            return result_envelope(
+                success=False,
+                summary="Shell 命令未重复执行",
+                error="同一工具调用上次执行状态不确定，已阻止重复产生副作用",
+                error_type="idempotency_conflict",
+            )
+        idempotency_claimed = bool(tool_call_id)
 
         writer({
             "tool_event": {
@@ -88,7 +110,7 @@ async def execute_shell(
         })
         shell_tool = ShellTool(
             name="execute_shell",
-            description="Execute commands inside the current isolated session workspace sandbox.",
+            description="Command-line execution tool for the current isolated session workspace sandbox.",
             process=SandboxShellProcess(workspace),
             ask_human_input=False,
         )
@@ -110,12 +132,22 @@ async def execute_shell(
                 },
             }
         })
-        return result_envelope(
+        result = result_envelope(
             success=True,
             output=output_text,
             summary=summary,
             duration_ms=duration_ms,
         )
+        if idempotency_claimed:
+            await asyncio.to_thread(
+                tool_idempotency_store.complete,
+                workspace,
+                "execute_shell",
+                tool_call_id,
+                arguments,
+                result,
+            )
+        return result
     except Exception as exc:  # noqa: BLE001 - 工具异常转为可控 ToolMessage
         duration_ms = int((time.monotonic() - started) * 1000)
         logger.exception("Shell工具执行失败: tool_call_id=%s", tool_call_id)
@@ -137,10 +169,20 @@ async def execute_shell(
                 },
             }
         })
-        return result_envelope(
+        result = result_envelope(
             success=False,
             summary="Shell执行超时" if is_timeout else "Shell执行失败",
             error=message,
             error_type=error_type,
             duration_ms=duration_ms,
         )
+        if idempotency_claimed and workspace is not None:
+            await asyncio.to_thread(
+                tool_idempotency_store.complete,
+                workspace,
+                "execute_shell",
+                tool_call_id,
+                arguments,
+                result,
+            )
+        return result

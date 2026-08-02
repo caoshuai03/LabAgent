@@ -83,6 +83,30 @@ class _FakeMultiQueryRetriever:
         self.llm_chain = _FakeLlmChain()
 
 
+def test_knowledge_hit_and_source_share_stable_citation_id() -> None:
+    """模型资料编号与前端来源编号必须使用同一个稳定标识。"""
+    document = Document(
+        page_content="实验三周五提交",
+        metadata={
+            "source": "实验要求.md",
+            "course_name": "操作系统实验",
+            "chapter_name": "实验三",
+            "section_name": "提交要求",
+        },
+    )
+    citation_id = rag_retrieval.build_citation_id(document)
+
+    formatted_hits = knowledge_tool._format_hits([document])
+    sources = rag_retrieval.build_sources([document])
+
+    assert f"[资料{citation_id}]" in formatted_hits
+    assert "标题路径: 操作系统实验 > 实验三 > 提交要求" in formatted_hits
+    assert sources[0]["citation_id"] == citation_id
+    assert sources[0]["course_name"] == "操作系统实验"
+    assert sources[0]["chapter_name"] == "实验三"
+    assert sources[0]["section_name"] == "提交要求"
+
+
 @pytest.mark.asyncio
 async def test_retrieve_uses_sync_retriever_in_thread(monkeypatch) -> None:
     """同步 PGVector 组合检索器必须通过 invoke 在线程中执行。"""
@@ -115,7 +139,7 @@ async def test_rerank_discards_invalid_and_duplicate_document_ids(
     monkeypatch,
     caplog,
 ) -> None:
-    """模型返回越界、负数或重复 ID 时应过滤，并按原召回顺序补足结果。"""
+    """模型返回越界、负数或重复 ID 时应过滤，且不得用粗召回结果补足。"""
     async def _invalid_rerank(*args, **kwargs):
         return rag_retrieval._RerankResult(
             ranked_document_ids=[2, 64, 2, -1, 1],
@@ -132,9 +156,23 @@ async def test_rerank_discards_invalid_and_duplicate_document_ids(
     with caplog.at_level(logging.WARNING, logger="labagent"):
         reranked = await rag_retrieval.rerank("冒泡排序要求", documents)
 
-    assert [document.page_content for document in reranked] == ["文档2", "文档1", "文档0"]
+    assert [document.page_content for document in reranked] == ["文档2", "文档1"]
     assert "discarded_count=3" in caplog.text
     assert "discarded_ids=[64, 2, -1]" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_rerank_allows_empty_result(monkeypatch) -> None:
+    """候选文档均不相关时，Rerank 应允许返回空结果。"""
+    async def _empty_rerank(*args, **kwargs):
+        return rag_retrieval._RerankResult(ranked_document_ids=[])
+
+    monkeypatch.setattr(rag_retrieval, "_invoke_rerank_model", _empty_rerank)
+    documents = [Document(page_content="无关资料")]
+
+    reranked = await rag_retrieval.rerank("实验提交时间", documents)
+
+    assert reranked == []
 
 
 def test_local_rerank_model_disables_reasoning_and_limits_output(monkeypatch) -> None:

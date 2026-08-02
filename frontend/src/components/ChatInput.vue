@@ -195,6 +195,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import {
   cancelReactAgent,
@@ -213,6 +214,7 @@ import ToolActivityIcon from './icons/ToolActivityIcon.vue'
 import { useToast } from '../composables/useToast'
 
 const chatStore = useChatStore()
+const route = useRoute()
 const toast = useToast()
 
 const inputText = ref('')
@@ -370,19 +372,38 @@ const canCompress = computed(() => {
 
 const handleCompress = async () => {
   if (!canCompress.value) return
+  const conversationKey = chatStore.currentConversationId
+  const afterMessageId = chatStore.getLastMessage(conversationKey)?.id || ''
+  const previousCompactionStatus = chatStore.compactionStatus
+  const previousCompactionAfterMessageId = chatStore.compactionAfterMessageId
+  const restorePreviousCompactionStatus = () => {
+    chatStore.setConversationCompactionStatus(
+      conversationKey,
+      previousCompactionStatus,
+      previousCompactionAfterMessageId,
+    )
+  }
   isCompressing.value = true
+  chatStore.setConversationCompactionStatus(
+    conversationKey,
+    'compressing',
+    afterMessageId,
+  )
   try {
-    const response = await compressConversation(chatStore.currentConversationId)
+    const response = await compressConversation(conversationKey)
     const result = response.data.data
     if (!result?.compressed) {
+      restorePreviousCompactionStatus()
       toast.info('当前上下文无需压缩')
       return
     }
+    chatStore.setConversationCompactionStatus(conversationKey, 'compressed')
     toast.success(
       `上下文已压缩：${result.before_tokens} → ${result.after_tokens} tokens`,
       5000,
     )
   } catch (error) {
+    restorePreviousCompactionStatus()
     toast.error(error.response?.data?.message || '上下文压缩失败')
   } finally {
     isCompressing.value = false
@@ -556,6 +577,11 @@ const finalizeStreamTask = async (conversationKey, { abort = false, refreshConve
   chatStore.markLastAssistantMessageComplete(conversationKey)
   chatStore.completeLastMessageReasoning(null, conversationKey)
   chatStore.clearPendingApproval(conversationKey)
+  if (!abort) {
+    const isViewingConversation =
+      route.path === '/' && chatStore.activeConversationKey === conversationKey
+    chatStore.markConversationComplete(conversationKey, isViewingConversation)
+  }
   chatStore.setConversationStreaming(conversationKey, false)
   chatStore.setConversationLoading(conversationKey, false)
   streamTasks.delete(conversationKey)

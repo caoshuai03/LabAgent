@@ -19,22 +19,31 @@
       <!-- 左侧品牌区 -->
       <section class="hero-panel">
         <div class="hero-brand">
-          <img class="hero-logo" :src="logoImage" alt="Lab Agent Logo" />
+          <img class="hero-logo" :src="logoImage" alt="LabAgent Logo" />
+          <span class="hero-brand-name">LabAgent</span>
         </div>
         <div class="hero-copy">
-          <p class="hero-kicker">WELCOME</p>
           <h1 class="hero-title">
-            <span>欢迎来到</span>
-            <span>Lab Agent</span>
+            <span>面向教学实验的</span>
+            <span>Agentic RAG 平台</span>
           </h1>
-          <p class="hero-subtitle">
-            一个面向教学实验的 Agentic RAG 平台。
-          </p>
           <ul class="hero-features">
-            <li>支持 Agentic RAG 与三级检索实验</li>
-            <li>内置 RAGAS 评测与效果优化闭环</li>
-            <li>适配多种厂商大模型，支持自定义模型</li>
-            <li>提供沙箱隔离与工具安全控制</li>
+            <li>
+              <span class="feature-label">RAG EXPERIMENT</span>
+              <span class="feature-text">支持 Agentic RAG 与三级检索实验</span>
+            </li>
+            <li>
+              <span class="feature-label">EVALUATION</span>
+              <span class="feature-text">内置 RAGAS 评测与效果优化闭环</span>
+            </li>
+            <li>
+              <span class="feature-label">MODEL ACCESS</span>
+              <span class="feature-text">适配多种厂商大模型，支持自定义模型</span>
+            </li>
+            <li>
+              <span class="feature-label">SECURE TOOLS</span>
+              <span class="feature-text">提供沙箱隔离与工具安全控制</span>
+            </li>
           </ul>
         </div>
       </section>
@@ -553,8 +562,8 @@ onBeforeUnmount(() => {
   max-width: 1200px;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(380px, 440px);
-  gap: 36px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(380px, 430px);
+  gap: clamp(48px, 7vw, 96px);
   align-items: center;
   z-index: 1;
 }
@@ -565,42 +574,44 @@ onBeforeUnmount(() => {
   flex-direction: column;
   justify-content: flex-start;
   min-height: 100%;
-  gap: 14px;
+  gap: 24px;
   padding-top: 10px;
 }
 
 .hero-brand {
-  width: 88px;
-  height: 88px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-  box-shadow: 0 16px 36px rgba(17, 24, 39, 0.06);
+  width: fit-content;
+  height: 76px;
+  padding: 0 22px 0 10px;
+  gap: 12px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  box-shadow: 0 14px 32px rgba(77, 27, 91, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
+  backdrop-filter: blur(16px);
 }
 
 .hero-logo {
-  width: 82%;
-  height: 82%;
+  width: 56px;
+  height: 56px;
   object-fit: contain;
 }
 
-.hero-kicker {
-  margin: 0 0 12px;
-  color: var(--primary-color, #90138b);
-  font-size: 0.78rem;
+.hero-brand-name {
+  color: #211925;
+  font-size: 1.25rem;
   font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: -0.03em;
 }
 
 .hero-title {
   margin: 0;
   color: #111827;
-  font-size: clamp(2.8rem, 4.6vw, 4.4rem);
-  line-height: 0.98;
-  letter-spacing: -0.06em;
+  font-size: clamp(2.7rem, 4.4vw, 4.2rem);
+  line-height: 1.06;
+  letter-spacing: -0.055em;
   font-weight: 700;
 
   span {
@@ -608,44 +619,53 @@ onBeforeUnmount(() => {
   }
 
   span + span {
-    margin-top: 8px;
-    color: #141b2d;
+    margin-top: 10px;
+    color: var(--primary-color, #90138b);
   }
-}
-
-.hero-subtitle {
-  margin: 10px 0 0;
-  max-width: 520px;
-  color: #6b7280;
-  font-size: 1.02rem;
-  line-height: 1.85;
 }
 
 .hero-features {
   list-style: none;
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin: 8px 0 0;
+  max-width: 650px;
+  margin: 32px 0 0;
   padding: 0;
 
   li {
-    position: relative;
-    padding-left: 22px;
-    color: #475467;
-    font-size: 0.98rem;
-    line-height: 1.7;
+    min-height: 94px;
+    padding: 16px 18px;
+    border: 1px solid rgba(144, 19, 139, 0.1);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.42);
+    backdrop-filter: blur(12px);
+    transition:
+      border-color 0.2s ease,
+      background-color 0.2s ease,
+      transform 0.2s ease;
   }
 
-  li::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0.7em;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #90138b 0%, #b43bb0 100%);
-    box-shadow: 0 0 0 4px rgba(144, 19, 139, 0.08);
+  li:hover {
+    border-color: rgba(144, 19, 139, 0.2);
+    background: rgba(255, 255, 255, 0.58);
+    transform: translateY(-2px);
+  }
+
+  .feature-label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--primary-color, #90138b);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+
+  .feature-text {
+    display: block;
+    color: #3f4350;
+    font-size: 0.93rem;
+    line-height: 1.55;
   }
 }
 
@@ -659,12 +679,14 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 430px;
   position: relative;
-  padding: 34px;
-  border-radius: 32px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(17, 24, 39, 0.06);
-  box-shadow: 0 24px 60px rgba(17, 24, 39, 0.12);
-  backdrop-filter: blur(20px);
+  padding: 38px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 28px 70px rgba(56, 30, 70, 0.12),
+    0 2px 8px rgba(56, 30, 70, 0.04);
+  backdrop-filter: blur(24px);
 }
 
 .back-arrow {
@@ -689,12 +711,12 @@ onBeforeUnmount(() => {
 }
 
 .auth-head {
-  margin-bottom: 22px;
+  margin-bottom: 28px;
 
   h2 {
     margin: 0;
     color: #111827;
-    font-size: 1.7rem;
+    font-size: 1.8rem;
     line-height: 1.15;
     letter-spacing: -0.04em;
   }
@@ -708,7 +730,7 @@ onBeforeUnmount(() => {
 }
 
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 
   label {
     display: block;
@@ -720,11 +742,11 @@ onBeforeUnmount(() => {
 
   input {
     width: 100%;
-    height: 52px;
+    height: 54px;
     padding: 0 16px;
-    border: 1px solid #d8dce6;
-    border-radius: 14px;
-    background: #fff;
+    border: 1px solid rgba(98, 86, 105, 0.2);
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.82);
     font-size: 0.98rem;
     color: #111827;
     outline: none;
@@ -734,8 +756,11 @@ onBeforeUnmount(() => {
       transform 0.2s ease;
 
     &:focus {
-      border-color: rgba(144, 19, 139, 0.55);
-      box-shadow: 0 0 0 4px rgba(144, 19, 139, 0.1);
+      border-color: rgba(144, 19, 139, 0.62);
+      box-shadow:
+        0 0 0 4px rgba(144, 19, 139, 0.09),
+        0 5px 14px rgba(86, 34, 100, 0.06);
+      background: #fff;
     }
 
     &::placeholder {
@@ -746,14 +771,15 @@ onBeforeUnmount(() => {
 
 .primary-button {
   width: 100%;
-  height: 52px;
+  height: 54px;
   border: none;
-  border-radius: 14px;
+  border-radius: 13px;
   background: var(--primary-color, #90138b);
   color: #fff;
   font-size: 0.98rem;
-  font-weight: 600;
-  box-shadow: 0 12px 24px rgba(144, 19, 139, 0.18);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: 0 12px 24px rgba(144, 19, 139, 0.2);
   cursor: pointer;
   transition:
     transform 0.2s ease,
@@ -761,8 +787,8 @@ onBeforeUnmount(() => {
     opacity 0.2s ease;
 
   &:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 16px 28px rgba(144, 19, 139, 0.22);
+    transform: translateY(-2px);
+    box-shadow: 0 16px 30px rgba(144, 19, 139, 0.25);
   }
 
   &:disabled {
@@ -790,6 +816,13 @@ onBeforeUnmount(() => {
   color: var(--primary-color, #90138b);
   font-weight: 700;
   cursor: pointer;
+}
+
+.back-arrow:focus-visible,
+.primary-button:focus-visible,
+.toggle-button:focus-visible {
+  outline: 3px solid rgba(144, 19, 139, 0.22);
+  outline-offset: 3px;
 }
 
 .error-message {
@@ -821,12 +854,8 @@ onBeforeUnmount(() => {
     padding-top: 0;
   }
 
-  .hero-features li {
-    padding-left: 0;
-  }
-
-  .hero-features li::before {
-    display: none;
+  .hero-features {
+    width: min(100%, 650px);
   }
 
   .auth-panel {
@@ -851,14 +880,21 @@ onBeforeUnmount(() => {
   }
 
   .hero-brand {
-    width: 64px;
     height: 64px;
+    padding: 0 18px 0 8px;
     border-radius: 18px;
   }
 
-  .hero-subtitle,
-  .hero-features,
-  .hero-kicker {
+  .hero-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .hero-brand-name {
+    font-size: 1.1rem;
+  }
+
+  .hero-features {
     display: none;
   }
 

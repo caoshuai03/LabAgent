@@ -38,6 +38,7 @@ class ToolRegistry:
             self._tools[tool_item.name] = tool_item
         self._metadata = {
             "write_file": ToolMetadata("langchain_file", "medium", False),
+            "save_user_memory": ToolMetadata("memory", "medium", False),
             "search_knowledge_base": ToolMetadata("rag", "low", True),
             "execute_shell": ToolMetadata("langchain_shell", "high", False),
             "activate_skill": ToolMetadata("skill", "low", True),
@@ -55,7 +56,7 @@ class ToolRegistry:
         names: list[str] = ["search_knowledge_base"]
         names.extend(tool_item.name for tool_item in MEMORY_TOOLS)
         if settings.skills_enabled and skill_catalog.list_summaries():
-            names.extend(tool_item.name for tool_item in SKILL_TOOLS)
+            names.append("activate_skill")
         if settings.file_tools_enabled:
             names.extend(tool_item.name for tool_item in FILE_TOOLS)
         if settings.shell_tool_enabled:

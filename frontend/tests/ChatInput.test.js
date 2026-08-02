@@ -272,6 +272,54 @@ describe('ChatInput', () => {
 
     expect(compressConversation).toHaveBeenCalledWith(sessionId)
     expect(wrapper.find('textarea').element.value).toBe('')
+    expect(chatStore.compactionStatus).toBe('')
+  })
+
+  it('主动压缩期间和成功后更新当前会话的压缩状态', async () => {
+    getSkills.mockResolvedValue({ data: { data: [] } })
+    let resolveCompression
+    compressConversation.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCompression = resolve
+      }),
+    )
+    const chatStore = useChatStore()
+    const draftKey = chatStore.createConversation()
+    const sessionId = '00000000-0000-0000-0000-000000000002'
+    chatStore.setCurrentSessionId(sessionId, draftKey)
+    chatStore.addMessage('assistant', '待压缩的历史消息', sessionId)
+    const wrapper = mount(ChatInput, {
+      global: {
+        plugins: [pinia],
+        directives: {
+          tooltip: () => {},
+          clickOutside: () => {},
+        },
+      },
+    })
+
+    await wrapper.find('textarea').setValue('/')
+    await flushPromises()
+    const compressButton = wrapper
+      .findAll('.menu-item')
+      .find((button) => button.text().includes('压缩上下文'))
+    await compressButton.trigger('click')
+
+    expect(chatStore.compactionStatus).toBe('compressing')
+    expect(chatStore.compactionAfterMessageId).toBe(chatStore.messages[0].id)
+
+    resolveCompression({
+      data: {
+        data: {
+          compressed: true,
+          before_tokens: 12000,
+          after_tokens: 3000,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(chatStore.compactionStatus).toBe('compressed')
   })
 
   it('技能加载期间按回车不会把斜杠作为普通消息发送', async () => {

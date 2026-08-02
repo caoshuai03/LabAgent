@@ -15,11 +15,16 @@ def build_knowledge_page_key(
     file_name: str | None,
     page: int,
     page_size: int,
+    sort_by: str = "create_time",
+    sort_order: str = "desc",
 ) -> str:
     """构造不暴露查询内容的知识库分页缓存键。"""
     normalized_name = (file_name or "").strip()
     name_hash = sha256(normalized_name.encode("utf-8")).hexdigest()[:16]
-    return f"labagent:knowledge:page:v1:{version}:{name_hash}:{page}:{page_size}"
+    return (
+        f"labagent:knowledge:page:v2:{version}:{name_hash}:{page}:{page_size}:"
+        f"{sort_by}:{sort_order}"
+    )
 
 
 async def invalidate_knowledge_cache() -> None:

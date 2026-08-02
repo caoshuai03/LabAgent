@@ -150,7 +150,16 @@ def _is_safe_non_stream_retry(exc: Exception) -> bool:
     )
 
 
-def _log_endpoint_failure(
+def _status_code(exc: Exception) -> int | None:
+    """提取模型调用异常中的 HTTP 状态码。"""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    if isinstance(exc, ResponseError):
+        return exc.status_code
+    return None
+
+
+def _log_model_failure(
     *,
     operation: str,
     endpoint_url: str,
@@ -162,10 +171,11 @@ def _log_endpoint_failure(
     """每次失败只输出一条不含请求内容的精简诊断日志。"""
     error_message = str(exc).replace("\r", " ").replace("\n", " ")[:200]
     logger.warning(
-        "Ollama调用失败: operation=%s, endpoint=%s, model=%s, error_type=%s, emitted=%s, cost=%dms, error=%s",
+        "Ollama调用失败: operation=%s, endpoint=%s, model=%s, status_code=%s, error_type=%s, emitted=%s, cost=%dms, error=%s",
         operation,
         endpoint_url,
         model_name,
+        _status_code(exc),
         type(exc).__name__,
         "unknown" if emitted is None else str(emitted).lower(),
         int((time.monotonic() - started) * 1000),
@@ -210,10 +220,9 @@ class LoadBalancedChatOllama(ChatOllama):
                     **kwargs,
                 )
             except BaseException as exc:
-                endpoint_failure = isinstance(exc, Exception) and _is_endpoint_failure(exc)
                 retryable = isinstance(exc, Exception) and _is_safe_non_stream_retry(exc)
-                if isinstance(exc, Exception) and endpoint_failure:
-                    _log_endpoint_failure(
+                if isinstance(exc, Exception):
+                    _log_model_failure(
                         operation=self.operation_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,
@@ -256,10 +265,9 @@ class LoadBalancedChatOllama(ChatOllama):
                     **kwargs,
                 )
             except BaseException as exc:
-                endpoint_failure = isinstance(exc, Exception) and _is_endpoint_failure(exc)
                 retryable = isinstance(exc, Exception) and _is_safe_non_stream_retry(exc)
-                if isinstance(exc, Exception) and endpoint_failure:
-                    _log_endpoint_failure(
+                if isinstance(exc, Exception):
+                    _log_model_failure(
                         operation=self.operation_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,
@@ -306,8 +314,8 @@ class LoadBalancedChatOllama(ChatOllama):
                     yield chunk
             except BaseException as exc:
                 endpoint_failure = isinstance(exc, Exception) and _is_endpoint_failure(exc)
-                if isinstance(exc, Exception) and endpoint_failure:
-                    _log_endpoint_failure(
+                if isinstance(exc, Exception):
+                    _log_model_failure(
                         operation=self.operation_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,
@@ -359,8 +367,8 @@ class LoadBalancedChatOllama(ChatOllama):
                     yield chunk
             except BaseException as exc:
                 endpoint_failure = isinstance(exc, Exception) and _is_endpoint_failure(exc)
-                if isinstance(exc, Exception) and endpoint_failure:
-                    _log_endpoint_failure(
+                if isinstance(exc, Exception):
+                    _log_model_failure(
                         operation=self.operation_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,
@@ -411,7 +419,7 @@ class LoadBalancedOllamaEmbeddings(OllamaEmbeddings):
             except BaseException as exc:
                 retryable = isinstance(exc, Exception) and _is_endpoint_failure(exc)
                 if isinstance(exc, Exception) and retryable:
-                    _log_endpoint_failure(
+                    _log_model_failure(
                         operation=method_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,
@@ -445,7 +453,7 @@ class LoadBalancedOllamaEmbeddings(OllamaEmbeddings):
             except BaseException as exc:
                 retryable = isinstance(exc, Exception) and _is_endpoint_failure(exc)
                 if isinstance(exc, Exception) and retryable:
-                    _log_endpoint_failure(
+                    _log_model_failure(
                         operation=method_name,
                         endpoint_url=lease.endpoint_url,
                         model_name=self.model,

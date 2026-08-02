@@ -4,10 +4,12 @@
 @description: 知识库业务服务——异步上传任务编排、同步更新、删除、下载与分页
 """
 import asyncio
+import hashlib
 import logging
 import uuid
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -84,18 +86,33 @@ class KnowledgeService:
         """先上传 MinIO，再提交文件与任务记录，最后写入 ARQ 队列。"""
         ext = _validate_upload(file_name, len(data), content_type)
         safe_name = _sanitize_file_name(file_name)
+        file_metadata = document_loader.extract_file_metadata(safe_name, data)
+        content_hash = hashlib.sha256(data).hexdigest()
+        duplicate = await self.repo.get_by_content_hash(content_hash)
+        if duplicate is not None:
+            raise self._duplicate_file_exception(duplicate)
         object_name = f"{uuid.uuid4().hex}.{ext}"
         url = await self.storage.upload(data, object_name)
         try:
             kb_file = await self.repo.add(
                 file_name=safe_name,
                 url=url,
+                content_hash=content_hash,
+                source_url=file_metadata.get("source_url"),
+                license=file_metadata.get("license"),
                 status=KbFileStatus.PENDING.value,
                 upload_user_id=user_id,
             )
             task = await self.task_repo.add(kb_file.id, user_id)
             await self.session.commit()
             await invalidate_knowledge_cache()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            await self._safe_delete_object(url)
+            duplicate = await self.repo.get_by_content_hash(content_hash)
+            if duplicate is not None:
+                raise self._duplicate_file_exception(duplicate) from exc
+            raise
         except Exception:
             await self.session.rollback()
             await self._safe_delete_object(url)
@@ -127,16 +144,34 @@ class KnowledgeService:
         """按 kb_file.id 定位文档做增量更新（不全量重建）：解析切分新文件 → index 增量 → 替换 MinIO → 更新元数据。"""
         ext = _validate_upload(file_name, len(data), content_type)
         safe_name = _sanitize_file_name(file_name)
+        file_metadata = document_loader.extract_file_metadata(safe_name, data)
         kb_file = await self.repo.get_by_id(kb_file_id)
         if kb_file is None:
             raise BusinessException(ErrorCode.NOT_FOUND_ERROR, "文件不存在")
         if kb_file.status in (KbFileStatus.PENDING.value, KbFileStatus.PROCESSING.value):
             raise BusinessException(ErrorCode.OPERATION_ERROR, "文件正在处理中，暂不能更新")
+        content_hash = hashlib.sha256(data).hexdigest()
+        duplicate = await self.repo.get_by_content_hash(
+            content_hash,
+            exclude_file_id=kb_file_id,
+        )
+        if duplicate is not None:
+            raise self._duplicate_file_exception(duplicate)
         source_id = str(kb_file.id)
         documents = document_loader.load_documents(safe_name, data)
         chunks = document_splitter.split_documents(documents)
         if not chunks:
             raise BusinessException(ErrorCode.FILE_ERROR, f"文件切分后无有效内容：{safe_name}")
+        kb_file.content_hash = content_hash
+        try:
+            # 先通过唯一约束占用内容哈希，避免并发更新绕过前置重复检查后再产生外部副作用。
+            await self.session.flush()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            duplicate = await self.repo.get_by_content_hash(content_hash)
+            if duplicate is not None:
+                raise self._duplicate_file_exception(duplicate) from exc
+            raise
         old_url = kb_file.url
         # 增量索引：框架按 source_id 只重写变化切片、清理旧切片
         await asyncio.to_thread(rag_store.index_documents, chunks, source_id)
@@ -147,17 +182,33 @@ class KnowledgeService:
             await self._safe_delete_object(old_url)
         kb_file.file_name = safe_name
         kb_file.url = url
+        kb_file.source_url = file_metadata.get("source_url")
+        kb_file.license = file_metadata.get("license")
         kb_file.status = KbFileStatus.READY.value
         kb_file.error_message = None
         kb_file.update_time = datetime.now()
         await self.session.flush()
         return self._to_vo(kb_file)
 
-    async def page_query(self, file_name: str | None, page: int, page_size: int) -> PageResult[KbFileVO]:
+    async def page_query(
+        self,
+        file_name: str | None,
+        page: int,
+        page_size: int,
+        sort_by: str = "create_time",
+        sort_order: str = "desc",
+    ) -> PageResult[KbFileVO]:
         """分页查询文件记录。"""
         version = await cache_service.get_version(KNOWLEDGE_VERSION_KEY)
         cache_key = (
-            build_knowledge_page_key(version, file_name, page, page_size)
+            build_knowledge_page_key(
+                version,
+                file_name,
+                page,
+                page_size,
+                sort_by,
+                sort_order,
+            )
             if version is not None
             else None
         )
@@ -168,7 +219,13 @@ class KnowledgeService:
                     return PageResult[KbFileVO].model_validate(cached)
                 except ValueError:
                     logger.warning("知识库分页缓存内容无效，已回源: key=%s", cache_key)
-        total, files = await self.repo.page(file_name, page, page_size)
+        total, files = await self.repo.page(
+            file_name,
+            page,
+            page_size,
+            sort_by,
+            sort_order,
+        )
         latest_tasks = await self.task_repo.latest_by_file_ids([file.id for file in files])
         result = PageResult(
             total=total,
@@ -331,6 +388,8 @@ class KnowledgeService:
             id=kb_file.id,
             file_name=kb_file.file_name,
             url=kb_file.url,
+            source_url=kb_file.source_url,
+            license=kb_file.license,
             status=kb_file.status,
             task_id=task.id if task is not None else None,
             stage=task.stage if task is not None else None,
@@ -368,3 +427,12 @@ class KnowledgeService:
         if not is_admin and task.user_id != user_id:
             raise BusinessException(ErrorCode.NO_AUTH_ERROR, "无权访问该上传任务")
         return task
+
+    @staticmethod
+    def _duplicate_file_exception(duplicate: KbFile) -> BusinessException:
+        """构造重复文件业务异常，避免重复存储与向量索引。"""
+        duplicate_name = duplicate.file_name or str(duplicate.id)
+        return BusinessException(
+            ErrorCode.PARAMS_ERROR,
+            f'文件内容已存在，与“{duplicate_name}”重复',
+        )

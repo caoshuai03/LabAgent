@@ -10,6 +10,8 @@
         :key="conversation.id"
         :conversation="conversation"
         :is-active="route.path === '/' && conversation.id === chatStore.currentConversationId"
+        :is-streaming="chatStore.isConversationStreaming(conversation.id)"
+        :has-unread-completion="chatStore.hasConversationUnreadCompletion(conversation.id)"
         :is-selection-mode="isSelectionMode"
         :is-selected="selectedIds.includes(conversation.id)"
         :is-menu-open="openedMenuConversationId === conversation.id"
@@ -25,7 +27,7 @@
 </template>
 
 <script setup>
-import { onUnmounted, ref } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useConfirm } from '../composables/useConfirm'
@@ -65,6 +67,16 @@ const flashScrollbar = () => {
 const handleScroll = () => {
   flashScrollbar()
 }
+
+watch(
+  () => [route.path, chatStore.currentConversationId],
+  ([path, conversationId]) => {
+    if (path === '/' && conversationId) {
+      chatStore.clearConversationCompletion(conversationId)
+    }
+  },
+  { immediate: true },
+)
 
 const handleSelect = (conversationId) => {
   openedMenuConversationId.value = null
