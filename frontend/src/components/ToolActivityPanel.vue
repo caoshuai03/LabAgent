@@ -607,4 +607,11 @@ const getShellDetail = (activity) => {
   overflow-wrap: normal;
   white-space: pre-wrap;
 }
+
+@media (hover: none) and (pointer: coarse) {
+  .activity-group-header,
+  .activity-row {
+    min-height: 44px;
+  }
+}
 </style>

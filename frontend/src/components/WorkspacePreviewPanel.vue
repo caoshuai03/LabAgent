@@ -229,7 +229,7 @@ watch(
 .workspace-preview-panel {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   flex-shrink: 0;
   border-left: 1px solid var(--border-color, #e5e5e5);
   background: var(--app-page-bg, #fafafc);
@@ -409,7 +409,7 @@ watch(
 .preview-image {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - 136px);
+  max-height: calc(var(--app-height, 100vh) - 136px);
   border-radius: 8px;
   object-fit: contain;
   box-shadow: 0 10px 32px rgba(17, 24, 39, 0.12);
@@ -655,9 +655,32 @@ watch(
     top: 0;
     right: 0;
     width: 100vw !important;
-    max-width: 420px;
+    max-width: none;
+    height: var(--app-height, 100vh);
+    border-left: 0;
     z-index: 1200;
-    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+    box-shadow: none;
+  }
+
+  .preview-header {
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+
+  .preview-collapse,
+  .preview-download {
+    width: 40px;
+    height: 40px;
+  }
+
+  .preview-tab {
+    min-height: 40px;
+  }
+
+  .preview-tab-close {
+    width: 28px;
+    height: 28px;
+    margin: -4px -4px -4px 0;
   }
 
   .preview-body {

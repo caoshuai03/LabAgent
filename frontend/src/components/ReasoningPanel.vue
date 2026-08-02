@@ -157,4 +157,10 @@ const segments = computed(() => {
     animation: none;
   }
 }
+
+@media (hover: none) and (pointer: coarse) {
+  .reasoning-header {
+    min-height: 44px;
+  }
+}
 </style>

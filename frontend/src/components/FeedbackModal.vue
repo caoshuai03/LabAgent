@@ -383,4 +383,39 @@ const handleSubmit = async () => {
     cursor: not-allowed;
   }
 }
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .modal-container {
+    width: 100%;
+    max-width: none;
+    max-height: calc(var(--app-height, 100vh) - env(safe-area-inset-top));
+    border-radius: 18px 18px 0 0;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+
+  .modal-footer {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .form-input,
+  .form-textarea {
+    font-size: 16px;
+  }
+
+  .type-btn,
+  .btn {
+    min-height: 44px;
+  }
+
+  .modal-footer .btn {
+    flex: 1;
+  }
+}
 </style>

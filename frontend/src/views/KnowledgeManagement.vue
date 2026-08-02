@@ -854,7 +854,7 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .knowledge-container {
   display: flex;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   width: 100vw;
   overflow: hidden;
   background-color: var(--bg-primary);
@@ -865,7 +865,7 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   overflow: hidden;
   min-width: 0;
 }
@@ -1473,7 +1473,7 @@ onBeforeUnmount(() => {
 // 响应式设计
 @media (max-width: 768px) {
   .knowledge-content {
-    padding: 12px;
+    padding: calc(64px + env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
 
     &.sidebar-collapsed {
       padding-left: 12px;
@@ -1491,9 +1491,64 @@ onBeforeUnmount(() => {
       width: 100%;
     }
 
-    .toolbar-right {
+    .toolbar-left {
       flex-direction: column;
+      align-items: stretch;
     }
+
+    .toolbar-right {
+      flex-direction: row;
+
+      .batch-btn {
+        flex: 1;
+        justify-content: center;
+      }
+    }
+
+    .header-actions,
+    .action-button,
+    .search-box {
+      width: 100%;
+    }
+
+    .action-button,
+    .batch-btn {
+      justify-content: center;
+      min-height: 44px;
+    }
+
+    .search-box {
+      min-height: 44px;
+
+      input {
+        min-width: 0;
+        font-size: 16px;
+      }
+
+      .clear-search {
+        width: 32px;
+        height: 32px;
+      }
+    }
+  }
+
+  .file-list {
+    overscroll-behavior-y: contain;
+  }
+
+  .file-card {
+    padding: 14px;
+  }
+
+  .file-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .retry-btn,
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .file-table {

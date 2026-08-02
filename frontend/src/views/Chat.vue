@@ -154,7 +154,7 @@ watch(
 <style lang="scss" scoped>
 .chat-container {
   display: flex;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   width: 100vw;
   overflow: hidden;
   background-color: var(--app-page-bg);
@@ -207,7 +207,7 @@ watch(
 
 .preview-expand-button {
   position: fixed;
-  top: 8px;
+  top: calc(8px + env(safe-area-inset-top));
   right: 8px;
   z-index: 200;
   display: inline-flex;
@@ -230,6 +230,15 @@ watch(
   svg {
     width: 18px;
     height: 18px;
+  }
+
+  @media (max-width: 768px) {
+    z-index: 950;
+    top: calc(6px + env(safe-area-inset-top));
+    right: 8px;
+    width: 40px;
+    height: 40px;
+    background: var(--app-page-bg);
   }
 }
 </style>

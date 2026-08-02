@@ -173,7 +173,7 @@ onMounted(() => {
 .memory-page {
   display: flex;
   width: 100vw;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   overflow: hidden;
   background: var(--app-page-bg);
 }
@@ -354,17 +354,24 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .memory-main {
-    padding: 28px 16px 48px;
+    padding-top: calc(68px + env(safe-area-inset-top));
   }
 
   .page-header {
-    margin-bottom: 30px;
+    display: none;
+  }
+}
 
-    h1 {
-      font-size: 24px;
-    }
+@media (max-width: 600px) {
+  .memory-main {
+    padding: calc(68px + env(safe-area-inset-top)) 16px max(48px, env(safe-area-inset-bottom));
+    overscroll-behavior-y: contain;
+  }
+
+  .page-header {
+    display: none;
   }
 
   .memory-layout {
@@ -377,9 +384,35 @@ onMounted(() => {
     gap: 16px;
   }
 
+  .editor-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .primary-button,
+  .text-button {
+    min-height: 44px;
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .memory-switch {
+    min-height: 44px;
+    white-space: normal;
+
+    input {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 20px;
+    }
+  }
+
   .memory-editor {
-    min-height: 340px;
+    height: min(48dvh, 420px);
+    min-height: 260px;
     padding: 16px;
+    font-size: 16px;
+    resize: none;
   }
 
   .profile-panel {

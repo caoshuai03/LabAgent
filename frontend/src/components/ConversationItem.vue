@@ -18,8 +18,8 @@
     </div>
 
     <div
-      v-if="(showActions || isMenuOpen) && !isSelectionMode"
-      :class="['actions', { visible: showActions || isMenuOpen }]"
+      v-if="(showActions || isMenuOpen || isCoarsePointer) && !isSelectionMode"
+      :class="['actions', { visible: showActions || isMenuOpen || isCoarsePointer }]"
       @click.stop
       ref="menuRef"
     >
@@ -34,6 +34,10 @@
 
       <!-- 下拉菜单 -->
       <div v-if="isMenuOpen" class="dropdown-menu" :style="menuStyle" ref="dropdownMenuRef">
+        <div class="menu-item" @click="handleDoubleClick">
+          <EditIcon :size="14" />
+          <span>重命名</span>
+        </div>
         <div class="menu-item" @click="handleEnterBatchMode">
           <TrashIcon :size="14" />
           <span>批量删除</span>
@@ -62,6 +66,7 @@
 import { ref, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
 import TrashIcon from './icons/TrashIcon.vue'
 import MoreIcon from './icons/MoreIcon.vue'
+import EditIcon from './icons/EditIcon.vue'
 
 const props = defineProps({
   conversation: {
@@ -96,6 +101,7 @@ const emit = defineEmits([
 ])
 
 const showActions = ref(false)
+const isCoarsePointer = ref(false)
 const menuRef = ref(null)
 const menuButtonRef = ref(null)
 const dropdownMenuRef = ref(null)
@@ -117,6 +123,9 @@ const handleClick = (event) => {
 
 const handleDoubleClick = () => {
   if (props.isSelectionMode) return
+  if (props.isMenuOpen) {
+    emit('toggleMenu', { conversationId: props.conversation.id, nextOpen: false })
+  }
   isRenaming.value = true
   editTitle.value = props.conversation.title
   nextTick(() => {
@@ -219,6 +228,7 @@ watch(
 )
 
 onMounted(() => {
+  isCoarsePointer.value = window.matchMedia('(hover: none) and (pointer: coarse)').matches
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
@@ -243,6 +253,16 @@ onBeforeUnmount(() => {
   position: relative;
   transition: all 0.2s;
   height: 36px;
+
+  @media (hover: none) and (pointer: coarse) {
+    height: 44px;
+
+    .actions .action-button {
+      width: 36px;
+      height: 36px;
+      padding: 8px;
+    }
+  }
 
   &.active {
     background-color: var(--bg-active);

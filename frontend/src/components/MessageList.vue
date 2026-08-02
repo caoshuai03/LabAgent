@@ -308,6 +308,15 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-width: 768px) {
+  .message-list {
+    padding-top: calc(68px + env(safe-area-inset-top));
+    padding-bottom: 20px;
+    overscroll-behavior-y: contain;
+  }
+
+}
+
 .scroll-to-bottom-button {
   position: absolute;
   bottom: 80px;
@@ -344,6 +353,14 @@ onBeforeUnmount(() => {
   &:active {
     transform: translateX(-50%) translateY(0);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+}
+
+@media (max-width: 768px) {
+  .scroll-to-bottom-button {
+    width: 44px;
+    height: 44px;
+    bottom: 16px;
   }
 }
 

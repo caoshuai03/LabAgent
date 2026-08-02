@@ -213,7 +213,7 @@ defineExpose({ handleKeyDown })
   bottom: calc(100% + 8px);
   left: 0;
   z-index: 1300;
-  max-height: min(340px, calc(100vh - 160px));
+  max-height: min(340px, calc(var(--app-height, 100vh) - 160px));
   padding: 6px;
   overflow-y: auto;
   border: 1px solid rgba(229, 231, 235, 0.96);
@@ -323,7 +323,11 @@ defineExpose({ handleKeyDown })
 
 @media (max-width: 768px) {
   .slash-command-menu {
-    max-height: min(320px, calc(100vh - 140px));
+    max-height: min(320px, calc(var(--app-height, 100vh) - 140px));
+  }
+
+  .menu-item {
+    min-height: 44px;
   }
 }
 </style>

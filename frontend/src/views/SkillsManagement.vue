@@ -139,7 +139,7 @@ onMounted(() => {
 <style lang="scss" scoped>
 .skills-container {
   display: flex;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   width: 100vw;
   overflow: hidden;
   background-color: var(--bg-primary);
@@ -150,7 +150,7 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   overflow: hidden;
   min-width: 0;
 }
@@ -555,11 +555,21 @@ onMounted(() => {
 // ==================== 响应式 ====================
 @media (max-width: 768px) {
   .skills-content {
-    padding: 12px;
+    padding: calc(64px + env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    overscroll-behavior-y: contain;
   }
 
   .dialog-content {
-    width: 95vw;
+    width: 100vw;
+    max-width: none;
+    height: var(--app-height, 100vh);
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .dialog-header {
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding-top: calc(12px + env(safe-area-inset-top));
   }
 
   .dialog-header,
@@ -568,8 +578,17 @@ onMounted(() => {
     padding-right: 16px;
   }
 
+  .dialog-header .close-btn {
+    width: 44px;
+    height: 44px;
+  }
+
   .detail-section {
     padding-top: 4px;
+  }
+
+  .skill-card {
+    padding: 16px;
   }
 }
 </style>

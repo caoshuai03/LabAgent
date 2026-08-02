@@ -461,7 +461,7 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .login-container {
   position: relative;
-  min-height: 100vh;
+  min-height: var(--app-height, 100vh);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -803,7 +803,11 @@ onBeforeUnmount(() => {
 
 @media (max-width: 980px) {
   .login-container {
-    padding: 24px;
+    height: var(--app-height, 100vh);
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 
   .login-shell {
@@ -832,20 +836,51 @@ onBeforeUnmount(() => {
 
 @media (max-width: 560px) {
   .login-container {
-    padding: 16px;
+    align-items: flex-start;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
   }
 
   .login-form {
     padding: 26px 20px;
+    border-radius: 24px;
   }
 
   .hero-title {
-    font-size: 2.4rem;
+    font-size: 2rem;
+    line-height: 1.05;
+  }
+
+  .hero-brand {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+  }
+
+  .hero-subtitle,
+  .hero-features,
+  .hero-kicker {
+    display: none;
+  }
+
+  .login-shell {
+    gap: 22px;
+  }
+
+  .form-group input {
+    font-size: 16px;
   }
 
   .switch-row {
     flex-direction: column;
     gap: 4px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .mouse-glow-layer,
+  .mouse-trail-particle,
+  .mouse-orb {
+    display: none;
   }
 }
 </style>

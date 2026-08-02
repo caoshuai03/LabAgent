@@ -201,4 +201,29 @@ const handleSubmit = async () => {
     }
   }
 }
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: none;
+    max-height: calc(var(--app-height, 100vh) - env(safe-area-inset-top));
+    padding: 24px 20px max(20px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    border-radius: 18px 18px 0 0;
+
+    .form-group input {
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    .form-actions button {
+      min-height: 44px;
+      flex: 1;
+    }
+  }
+}
 </style>

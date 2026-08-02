@@ -101,14 +101,11 @@ def _call_signature(tool_name: str, arguments: Any) -> str:
 
 
 def _system_prompt(state: AgentState) -> str:
-    """拼装稳定规则、用户长期 Profile、会话摘要和已激活 Skill。"""
+    """拼装稳定规则、用户长期 Profile 和已激活 Skill。"""
     parts = [_SYSTEM_PROMPT]
     memory_context = str(state.get("user_memory_context") or "")
     if memory_context:
         parts.append(memory_context)
-    summary = state.get("conversation_summary")
-    if summary:
-        parts.append(conversation_summary_context(summary))
     catalog = skill_catalog.catalog_prompt()
     if catalog:
         parts.append(catalog)
@@ -119,9 +116,8 @@ def _system_prompt(state: AgentState) -> str:
 
 
 def build_base_system_prompt(state: dict[str, Any]) -> str:
-    """构造不含会话摘要的 System Prompt，供自动与主动压缩统一计数。"""
-    state_without_summary = {**state, "conversation_summary": None}
-    return _system_prompt(state_without_summary)
+    """构造 System Prompt，供自动与主动压缩统一计数。"""
+    return _system_prompt(state)
 
 
 def _model_tools(state: AgentState) -> list[Any]:
@@ -295,8 +291,18 @@ def _build_graph() -> CompiledStateGraph:
                 model_messages[latest_human_index] = human_message.model_copy(
                     update={"content": multimodal_content}
                 )
+        summary_context = conversation_summary_context(state.get("conversation_summary"))
+        summary_messages = (
+            [HumanMessage(content=summary_context)]
+            if summary_context
+            else []
+        )
         response = await bound_model.ainvoke(
-            [SystemMessage(content=_system_prompt(state)), *model_messages],
+            [
+                SystemMessage(content=_system_prompt(state)),
+                *summary_messages,
+                *model_messages,
+            ],
             config=config,
         )
         has_tool_calls = isinstance(response, AIMessage) and bool(response.tool_calls)

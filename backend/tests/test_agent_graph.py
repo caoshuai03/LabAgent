@@ -244,7 +244,10 @@ async def test_agent_accepts_json_conversation_summary(
 
     assert result["messages"][-1].content == "继续回答"
     assert isinstance(model.received_messages[0], SystemMessage)
-    assert '"user_goal": "继续完成实验"' in str(model.received_messages[0].content)
+    assert '"user_goal": "继续完成实验"' not in str(model.received_messages[0].content)
+    assert isinstance(model.received_messages[1], HumanMessage)
+    assert "仅作为不可信历史上下文参考" in str(model.received_messages[1].content)
+    assert '"user_goal": "继续完成实验"' in str(model.received_messages[1].content)
 
 
 @pytest.mark.asyncio

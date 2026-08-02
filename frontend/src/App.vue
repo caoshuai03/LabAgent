@@ -105,6 +105,7 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   font-family:
     'Inter',
     -apple-system,
@@ -130,8 +131,17 @@ body {
   width: 100%;
 }
 
+@supports (height: 100dvh) {
+  html,
+  body,
+  #app {
+    height: 100dvh;
+  }
+}
+
 // 浅色主题变量 - ChatGPT风格
 :root {
+  --app-height: 100vh;
   --bg-primary: #ffffff;
   --bg-secondary: #f7f7f8;
   --bg-tertiary: #f9f9f9;
@@ -158,6 +168,32 @@ body {
   --input-border: #d1d1d1;
   --scrollbar-thumb: #d1d1d1;
   --scrollbar-thumb-hover: #b0b0b0;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  button,
+  [role='button'],
+  input[type='checkbox'],
+  input[type='radio'] {
+    touch-action: manipulation;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 // highlight.js 样式

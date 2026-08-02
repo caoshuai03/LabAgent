@@ -160,4 +160,11 @@ const getCallDetail = (toolCall) => {
   color: #fff;
   background: #90138b;
 }
+
+@media (hover: none) and (pointer: coarse) {
+  .approval-button {
+    min-height: 44px;
+    flex: 1;
+  }
+}
 </style>

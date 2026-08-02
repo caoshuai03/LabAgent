@@ -297,4 +297,16 @@ const handleMenuClick = (action) => {
   opacity: 0;
   transform: translateY(10px);
 }
+
+@media (hover: none) and (pointer: coarse) {
+  .user-profile .profile-content {
+    .profile-header {
+      min-height: 44px;
+    }
+
+    .dropdown-menu .menu-item {
+      min-height: 44px;
+    }
+  }
+}
 </style>

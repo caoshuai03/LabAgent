@@ -103,10 +103,28 @@
       @mousedown="startResize"
     ></div>
   </div>
+  <button
+    v-if="isMobile && !chatStore.sidebarCollapsed"
+    type="button"
+    class="sidebar-backdrop"
+    aria-label="关闭侧边栏"
+    @click="chatStore.sidebarCollapsed = true"
+  ></button>
+  <header v-if="isMobile && chatStore.sidebarCollapsed" class="mobile-page-bar">
+    <button
+      type="button"
+      class="mobile-menu-button"
+      aria-label="打开侧边栏"
+      @click="chatStore.toggleSidebar"
+    >
+      <span aria-hidden="true">☰</span>
+    </button>
+    <strong>{{ mobilePageTitle }}</strong>
+  </header>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useConfirm } from '../composables/useConfirm'
@@ -133,10 +151,33 @@ const isResizing = ref(false)
 const isCollapsingByDrag = ref(false)
 const isExpandingByDrag = ref(false)
 const isAnimatingCollapse = ref(false)
+const isMobile = ref(false)
 const SIDEBAR_TRANSITION_MS = 340
 let collapseAnimationTimer = null
 let expandByDragTimer = null
 const showExpandedSidebar = computed(() => !chatStore.sidebarCollapsed || isAnimatingCollapse.value)
+const mobilePageTitle = computed(() => {
+  const titles = {
+    '/': 'LabAgent',
+    '/knowledge': '知识库',
+    '/skills': '技能',
+    '/memory': '规则与记忆',
+  }
+  return titles[route.path] || 'LabAgent'
+})
+
+const syncMobileState = () => {
+  isMobile.value = window.innerWidth <= 768
+  if (isMobile.value) {
+    chatStore.sidebarCollapsed = true
+  }
+}
+
+const closeMobileSidebar = () => {
+  if (isMobile.value) {
+    chatStore.sidebarCollapsed = true
+  }
+}
 
 const cancelSelectionMode = () => {
   isSelectionMode.value = false
@@ -180,18 +221,22 @@ const handleNewConversation = () => {
   if (route.path !== '/') {
     router.push('/')
   }
+  closeMobileSidebar()
 }
 
 const handleKnowledgeManagement = () => {
   router.push('/knowledge')
+  closeMobileSidebar()
 }
 
 const handleSkillsManagement = () => {
   router.push('/skills')
+  closeMobileSidebar()
 }
 
 const handleMemoryManagement = () => {
   router.push('/memory')
+  closeMobileSidebar()
 }
 
 const stopResize = () => {
@@ -281,10 +326,16 @@ watch(
   },
 )
 
+onMounted(() => {
+  syncMobileState()
+  window.addEventListener('resize', syncMobileState)
+})
+
 onBeforeUnmount(() => {
   stopResize()
   clearCollapseAnimationTimer()
   clearExpandByDragTimer()
+  window.removeEventListener('resize', syncMobileState)
 })
 </script>
 
@@ -292,7 +343,7 @@ onBeforeUnmount(() => {
 .sidebar {
   --sidebar-transition-duration: 0.34s;
   --sidebar-transition-easing: cubic-bezier(0.2, 0, 0, 1);
-  height: 100vh;
+  height: var(--app-height, 100vh);
   background-color: var(--bg-secondary);
   display: flex;
   flex-direction: column;
@@ -332,9 +383,25 @@ onBeforeUnmount(() => {
       width var(--sidebar-transition-duration) var(--sidebar-transition-easing);
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
 
+    &:not(.collapsed) {
+      width: min(86vw, 320px) !important;
+    }
+
     &.collapsed {
       transform: translateX(-260px);
       overflow: hidden;
+    }
+
+    .sidebar-header .nav-menu .nav-item {
+      min-height: 44px;
+    }
+
+    .sidebar-header .sidebar-top {
+      padding-top: calc(16px + env(safe-area-inset-top));
+    }
+
+    .sidebar-bottom {
+      padding-bottom: env(safe-area-inset-bottom);
     }
   }
 
@@ -343,6 +410,65 @@ onBeforeUnmount(() => {
     &.collapsed {
       overflow: hidden;
     }
+  }
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  padding: 0;
+  border: 0;
+  background: rgba(17, 24, 39, 0.32);
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-page-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 52px 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--app-page-bg);
+  background: color-mix(in srgb, var(--app-page-bg) 94%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+
+  strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.mobile-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 20px;
+  cursor: pointer;
+
+  &:active {
+    background: var(--bg-hover);
   }
 }
 
@@ -507,6 +633,12 @@ onBeforeUnmount(() => {
     }
 
     .nav-menu {
+      display: none;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .sidebar-header {
       display: none;
     }
   }

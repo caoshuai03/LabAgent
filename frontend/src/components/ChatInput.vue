@@ -1042,12 +1042,12 @@ onUnmounted(() => {
   }
 
   @media (max-width: 768px) {
-    padding: 0;
+    padding: 0 0 max(8px, env(safe-area-inset-bottom));
 
     .input-wrapper {
       gap: 8px;
       min-height: 88px;
-      padding: 14px 14px 10px 14px;
+      padding: 12px 12px 8px;
       border-radius: 28px;
 
       &.expanded {
@@ -1241,7 +1241,8 @@ onUnmounted(() => {
   }
 
   @media (max-width: 768px) {
-    font-size: 15px;
+    max-height: min(240px, 35dvh);
+    font-size: 16px;
   }
 
   &::-webkit-scrollbar {
@@ -1323,7 +1324,7 @@ onUnmounted(() => {
     right: 0;
     bottom: calc(100% + 10px);
     width: 220px;
-    max-height: min(280px, calc(100vh - 180px));
+    max-height: min(280px, calc(var(--app-height, 100vh) - 180px));
     padding: 6px;
     border: 1px solid rgba(229, 231, 235, 0.95);
     border-radius: 18px;
@@ -1464,13 +1465,41 @@ onUnmounted(() => {
   @media (max-width: 768px) {
     .model-selector-button {
       max-width: 118px;
-      padding: 0 8px;
-      font-size: 12px;
+      height: 40px;
+      padding: 0 10px;
+      font-size: 13px;
     }
 
     .model-dropdown-menu {
       width: 200px;
+      max-height: min(280px, calc(100dvh - 180px));
     }
+
+    .action-button {
+      width: 40px;
+      height: 40px;
+
+      &.send-button,
+      &.stop-button {
+        width: 40px;
+        height: 40px;
+      }
+    }
+  }
+}
+
+@media (max-width: 768px) and (pointer: coarse) {
+  .input-footer .action-button.attach-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .remove-image-button {
+    top: 0;
+    right: 0;
+    width: 28px;
+    height: 28px;
+    line-height: 26px;
   }
 }
 

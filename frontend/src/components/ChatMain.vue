@@ -4,17 +4,6 @@
     :class="{ 'is-empty': chatStore.messages.length === 0 && !isHistorySwitching }"
     @click="handleMainClick"
   >
-    <!-- 移动端顶部菜单入口 -->
-    <div v-if="showMobileMenuButton" class="top-bar">
-      <button
-        @click.stop="toggleSidebar"
-        class="mobile-menu-button"
-        v-tooltip="'打开菜单'"
-      >
-        ☰
-      </button>
-    </div>
-
     <MessageList
       v-show="chatStore.messages.length > 0 || isHistorySwitching"
       @approval-decision="handleApprovalDecision"
@@ -73,17 +62,9 @@ const DELETE_DELAY = 34
 const HOLD_DELAY = 1400
 const SWITCH_DELAY = 260
 
-const showMobileMenuButton = computed(() => {
-  return isMobile.value && chatStore.sidebarCollapsed
-})
-
 const isHistorySwitching = computed(() => {
   return Boolean(chatStore.currentConversationId && chatStore.isLoading && chatStore.messages.length === 0)
 })
-
-const toggleSidebar = () => {
-  chatStore.toggleSidebar()
-}
 
 const scheduleWelcomeTitleTyping = (delay) => {
   welcomeTitleTimer = window.setTimeout(updateWelcomeTitleTyping, delay)
@@ -151,7 +132,7 @@ onUnmounted(() => {
   flex: 1 0 min(480px, 100vw);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: var(--app-height, 100vh);
   min-width: min(480px, 100vw);
   position: relative;
   overflow: hidden;
@@ -262,6 +243,10 @@ onUnmounted(() => {
         }
       }
     }
+
+    .footer-container {
+      display: none;
+    }
   }
 }
 
@@ -277,50 +262,4 @@ onUnmounted(() => {
   }
 }
 
-.top-bar {
-  display: flex;
-  align-items: center;
-  padding: 16px 20px;
-  background-color: transparent;
-  flex-shrink: 0;
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 100;
-  pointer-events: none;
-
-  .mobile-menu-button {
-    pointer-events: auto;
-    width: 32px;
-    height: 32px;
-    background-color: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-size: 18px;
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    flex-shrink: 0;
-    margin-right: 8px;
-
-    &:hover {
-      background-color: var(--bg-hover);
-    }
-
-    @media (max-width: 768px) {
-      display: flex;
-    }
-  }
-
-  @media (max-width: 768px) {
-    position: relative;
-    top: 0;
-    left: 0;
-    padding: 12px 16px;
-    pointer-events: auto;
-  }
-}
 </style>
